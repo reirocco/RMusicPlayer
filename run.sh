@@ -24,3 +24,6 @@ fi
 
 # Crea una nuova sessione screen e avvia Flask al suo interno
 screen -S RMusicPlayer -dm bash -c 'flask run'
+sleep 2
+open http://127.0.0.1:5000 &
+
