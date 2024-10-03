@@ -28,7 +28,7 @@ function playSong(index) {
 
         let currentTrackName = currentSongs[index];
         let nextTrackName = (index + 1 < currentSongs.length) ? currentSongs[index + 1] : currentSongs[0];
-        currentTrackInfo.innerHTML = `Traccia ${index + 1} di ${currentSongs.length} <br> In riproduzione: <span>${currentTrackName}</span> <br> Prossima traccia: <span>${nextTrackName}</span>`;
+        currentTrackInfo.innerHTML = `Traccia ${index + 1} di ${currentSongs.length} <br> In riproduzione: <span>${currentTrackName}</span> - Prossima traccia: <span>${nextTrackName}</span>`;
     }
 
     audioPlayer.onended = function() {
