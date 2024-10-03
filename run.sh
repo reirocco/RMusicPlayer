@@ -2,13 +2,13 @@
 
 # Nome del virtual environment (modifica a piacere)
 venv_name=enviroment
-pwd
+#pwd
 # Controlla se il virtual environment esiste già
-if [ ! -d "$venv_name" ]; then
-  # Crea il virtual environment
-  python3 -m venv $venv_name
-  echo "Virtual environment creato: $venv_name"
-fi
+#if [ ! -d "$venv_name" ]; then
+#  # Crea il virtual environment
+#  python3 -m venv $venv_name
+#  echo "Virtual environment creato: $venv_name"
+#fi
 
 # Attiva il virtual environment
 source $venv_name/bin/activate

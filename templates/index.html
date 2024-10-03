@@ -1,15 +1,18 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Elenco Cartelle</title>
+    <title>RMusicPlayer</title>
 
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.css') }}">
 
     <style>
         body {
+            background-color: black;
             padding: 20px;
+            color: white;
         }
         .container {
             max-width: 800px;
@@ -21,17 +24,17 @@
         }
         .audio-player {
             position: fixed;
-            bottom: 60px;
+            bottom: 30px;
             left: 0;
             right: 0;
             text-align: center;
         }
         .info-bar {
             position: fixed;
-            bottom: 0;
+            bottom: 20px;
             left: 0;
             right: 0;
-            background-color: #f8f9fa;
+            background-color: #000000;
             padding: 10px;
             border-top: 1px solid #ddd;
             text-align: center;
@@ -43,25 +46,30 @@
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center">Cartelle nella Cartella Music</h1>
-        <div class="d-grid gap-2">
+        <h1 class="text-center">RMusicPlayer</h1>
+        <h2 class="text-center" >Riccioli D'oro - Mira Montaccini</h2>
+        <div class="d-grid gap-2 row" >
             {% for folder in folders %}
                 <button class="btn btn-primary folder-button" type="button" onclick="loadSongs('{{ folder }}')">{{ folder }}</button>
             {% endfor %}
         </div>
+
+
+    <div class="audio-player ">
+
     </div>
 
-    <div class="audio-player">
+    <div class="info-bar ">
         <audio id="audioPlayer" controls>
             Your browser does not support the audio element.
         </audio>
-    </div>
-
-    <div class="info-bar">
+        <hr>
         <span id="currentTrackInfo">Nessuna traccia in riproduzione</span>
     </div>
 
-    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/bootstrap.bundle.js') }}"></script>
     <script src="{{ url_for('static', filename='js/player.js') }}"></script>
 </body>
 </html>
