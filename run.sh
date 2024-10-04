@@ -23,7 +23,7 @@ source /opt/RMusicPlayer/$venv_name/bin/activate
 #fi
 
 # Crea una nuova sessione screen e avvia Flask al suo interno
-screen -S RMusicPlayer -dm bash -c 'flask run'
+screen -S RMusicPlayer -dm bash -c 'python3 /opt/RMusicPlayer/app.py'
 sleep 5
 open http://127.0.0.1:5000 &
 
