@@ -42,12 +42,15 @@
         .info-bar span {
             font-weight: bold;
         }
+        .testo{
+            color: #ffd700;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center">RMusicPlayer</h1>
-        <h2 class="text-center" >Riccioli D'oro - Mira Montaccini</h2>
+        <h1 class="text-center testo">RMusicPlayer</h1>
+        <h2 class="text-center testo" >Riccioli D'oro - Mira Montaccini</h2>
         <div class="d-grid gap-2 row" >
             {% for folder in folders %}
                 <button class="btn btn-primary folder-button" type="button" onclick="loadSongs('{{ folder }}')">{{ folder }}</button>
