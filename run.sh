@@ -11,7 +11,7 @@ venv_name=enviroment
 #fi
 
 # Attiva il virtual environment
-source $venv_name/bin/activate
+source /opt/RMusicPlayer/$venv_name/bin/activate
 
 # Controlla se esiste il file requirements.txt
 #if [ -f requirements.txt ]; then
