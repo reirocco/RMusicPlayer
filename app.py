@@ -10,7 +10,7 @@ app = Flask(__name__)
 def ensure_music_directory_exists():
     #home_directory = os.path.expanduser("~")
     #music_directory = os.path.join(home_directory, 'RMusicPlayer')
-    music_directory = "RMusicPlayer"
+    music_directory = "/opt/RMusicPlayer/RMusicPlayer"
 
     # Controlla se la cartella esiste, altrimenti la crea
     if not os.path.exists(music_directory):
