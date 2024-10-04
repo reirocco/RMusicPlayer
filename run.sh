@@ -14,16 +14,16 @@ venv_name=enviroment
 source $venv_name/bin/activate
 
 # Controlla se esiste il file requirements.txt
-if [ -f requirements.txt ]; then
+#if [ -f requirements.txt ]; then
   # Installa i pacchetti dal file requirements.txt
-  pip install -r requirements.txt
-  echo "Pacchetti installati da requirements.txt"
-else
-  echo "File requirements.txt non trovato."
-fi
+#  pip install -r requirements.txt
+#  echo "Pacchetti installati da requirements.txt"
+#else
+#  echo "File requirements.txt non trovato."
+#fi
 
 # Crea una nuova sessione screen e avvia Flask al suo interno
 screen -S RMusicPlayer -dm bash -c 'flask run'
-sleep 2
+sleep 5
 open http://127.0.0.1:5000 &
 
