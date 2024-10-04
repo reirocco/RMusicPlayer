@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.css') }}">
 
     <style>
+
         body {
             background-color: black;
             padding: 20px;
@@ -21,17 +22,18 @@
         .folder-button {
             margin-bottom: 10px;
             width: 100%;
+            font-size: 1.5rem; /* Aumenta la dimensione del testo dei bottoni */font-size: 1.5rem; /* Aumenta la dimensione del testo dei bottoni */
         }
         .audio-player {
             position: fixed;
-            bottom: 30px;
+            bottom: 10px;
             left: 0;
             right: 0;
             text-align: center;
         }
         .info-bar {
             position: fixed;
-            bottom: 20px;
+            bottom: 10px;
             left: 0;
             right: 0;
             background-color: #000000;
@@ -51,9 +53,11 @@
     <div class="container">
         <h1 class="text-center testo">RMusicPlayer</h1>
         <h2 class="text-center testo" >Riccioli D'oro - Mira Montaccini</h2>
-        <div class="d-grid gap-2 row" >
+        <div class="row">
             {% for folder in folders %}
-                <button class="btn btn-primary folder-button" type="button" onclick="loadSongs('{{ folder }}')">{{ folder }}</button>
+                <div class="col-md-6">
+                    <button class="btn btn-primary folder-button" type="button" onclick="loadSongs('{{ folder }}')">{{ folder }}</button>
+                </div>
             {% endfor %}
         </div>
 
