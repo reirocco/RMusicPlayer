@@ -8,8 +8,9 @@ app = Flask(__name__)
 
 # Funzione per creare la cartella RMusicPlayer nella home directory se non esiste
 def ensure_music_directory_exists():
-    home_directory = os.path.expanduser("~")
-    music_directory = os.path.join(home_directory, 'RMusicPlayer')
+    #home_directory = os.path.expanduser("~")
+    #music_directory = os.path.join(home_directory, 'RMusicPlayer')
+    music_directory = "RMusicPlayer"
 
     # Controlla se la cartella esiste, altrimenti la crea
     if not os.path.exists(music_directory):
