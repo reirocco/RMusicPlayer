@@ -1,21 +1,16 @@
 <!DOCTYPE html>
-<html>
+<html lang="it">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Modalità Karaoke</title>
+    <!-- Include Bootstrap CSS senza l'attributo integrity -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
             font-family: Arial, sans-serif;
             padding: 20px;
             background: #f0f0f0;
-        }
-        input {
-            padding: 10px;
-            width: 300px;
-            margin-right: 10px;
-        }
-        button {
-            padding: 10px 20px;
-            cursor: pointer;
         }
         .video {
             background: white;
@@ -41,14 +36,48 @@
     <script src="{{ url_for('static', filename='config.js') }}"></script>
 </head>
 <body>
-<h1>🎤 Modalità Karaoke</h1>
 
-<input type="text" id="query" placeholder="Cerca canzone karaoke">
-<button onclick="searchVideos()">Cerca</button>
+<!-- Barra di navigazione con il pulsante per aprire il projector in alto a destra -->
+<nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="#">🎤 Modalità Karaoke</a>
+        <button class="btn btn-primary" onclick="openProjectionWindow()" style="position: absolute; right: 20px;">Vai alla Proiezione</button>
+    </div>
+</nav>
 
-<div id="results"></div>
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8">
+            <input type="text" id="query" class="form-control" placeholder="Cerca canzone karaoke" onkeydown="checkEnter(event)">
+        </div>
+        <div class="col-md-4">
+            <button onclick="searchVideos()" class="btn btn-primary btn-block">Cerca</button>
+        </div>
+    </div>
+
+    <div id="results" class="mt-4"></div>
+</div>
+
+<!-- Include Bootstrap JS e Popper.js senza l'attributo integrity -->
+<script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 
 <script>
+    function openProjectionWindow() {
+        // Dimensioni della finestra
+        const width = 800;
+        const height = 600;
+        const left = (window.innerWidth / 2) - (width / 2);
+        const top = (window.innerHeight / 2) - (height / 2);
+
+        // Opzioni della finestra
+        const windowFeatures = `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`;
+
+        // Apri la finestra separata con l'URL '/projector'
+        window.open('/projector', 'ProjectorWindow', windowFeatures);
+    }
+
     function searchVideos() {
         const query = document.getElementById('query').value + " karaoke";
         const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
@@ -71,7 +100,7 @@
                             <img src="${thumbnail}" alt="Thumbnail">
                             <div class="video-info">
                                 <div class="video-title">${title}</div>
-                                <button onclick="projectVideo('${videoId}')">Proietta</button>
+                                <button onclick="projectVideo('${videoId}')" class="btn btn-success">Proietta</button>
                             </div>
                         `;
 
@@ -88,6 +117,14 @@
         fetch(`/set_video/${videoId}`)
             .then(() => console.log("Video proiettato:", videoId));
     }
+
+    // Funzione per gestire il tasto "Invio"
+    function checkEnter(event) {
+        if (event.key === "Enter") {
+            searchVideos(); // Simula il clic sul pulsante di ricerca
+        }
+    }
 </script>
+
 </body>
 </html>
