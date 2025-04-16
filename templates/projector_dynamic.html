@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Proiettore Karaoke</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            height: 100%;
+            overflow: hidden;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: sans-serif;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: none;
+        }
+        .message {
+            font-size: 2em;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<div id="message" class="message">In attesa di un video...</div>
+<iframe id="videoFrame" allowfullscreen></iframe>
+
+<script>
+    let currentVideo = null;
+
+    // Funzione per aggiornare il video ogni 2 secondi
+    function updateVideo() {
+        fetch('/get_video')
+            .then(res => res.json())
+            .then(data => {
+                const videoId = data.video_id;
+
+                // Se c'è un nuovo video da proiettare
+                if (videoId && videoId !== currentVideo) {
+                    currentVideo = videoId;
+
+                    // Cambia il video nell'iframe
+                    const iframe = document.getElementById('videoFrame');
+                    const msg = document.getElementById('message');
+
+                    iframe.src = `https://www.youtube.com/embed/${currentVideo}?autoplay=1&controls=0&enablejsapi=1`;
+                    iframe.style.display = 'block'; // Mostra l'iframe
+                    msg.style.display = 'none'; // Nascondi il messaggio di attesa
+                }
+            })
+            .catch(err => {
+                console.error("Errore nel recupero video:", err);
+            });
+    }
+
+    // Iniziamo a controllare ogni 2 secondi per vedere se il video è cambiato
+    setInterval(updateVideo, 2000);
+</script>
+</body>
+</html>

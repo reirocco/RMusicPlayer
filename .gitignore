@@ -1,2 +1,3 @@
 # Project exclude paths
 /env/
+/static/config.js

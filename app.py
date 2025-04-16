@@ -61,6 +61,27 @@ def serve_music(folder, filename):
     music_directory = os.path.join(home_directory, 'RMusicPlayer', folder)
     return send_from_directory(music_directory, filename)
 
+@app.route('/karaoke')
+def karaoke():
+    return render_template('karaoke.html')
+
+# Variabile globale per salvare l'ID del video corrente
+current_video_id = None
+
+@app.route('/projector')
+def projector():
+    return render_template('projector_dynamic.html')
+
+@app.route('/set_video/<video_id>')
+def set_video(video_id):
+    global current_video_id
+    current_video_id = video_id
+    return {'status': 'ok'}
+
+@app.route('/get_video')
+def get_video():
+    return {'video_id': current_video_id}
+
 
 @app.route('/')
 def index():

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Modalità Karaoke</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        input {
+            padding: 10px;
+            width: 300px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        .video {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 0 8px rgba(0,0,0,0.1);
+            margin: 10px 0;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+        }
+        .video img {
+            width: 120px;
+            margin-right: 15px;
+        }
+        .video-info {
+            flex: 1;
+        }
+        .video-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+    </style>
+    <script src="{{ url_for('static', filename='config.js') }}"></script>
+</head>
+<body>
+<h1>🎤 Modalità Karaoke</h1>
+
+<input type="text" id="query" placeholder="Cerca canzone karaoke">
+<button onclick="searchVideos()">Cerca</button>
+
+<div id="results"></div>
+
+<script>
+    function searchVideos() {
+        const query = document.getElementById('query').value + " karaoke";
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = '';
+
+                data.items.forEach(item => {
+                    const videoId = item.id.videoId;
+                    const title = item.snippet.title;
+                    const thumbnail = item.snippet.thumbnails.medium.url;
+
+                    const videoDiv = document.createElement('div');
+                    videoDiv.className = 'video';
+
+                    videoDiv.innerHTML = `
+                            <img src="${thumbnail}" alt="Thumbnail">
+                            <div class="video-info">
+                                <div class="video-title">${title}</div>
+                                <button onclick="projectVideo('${videoId}')">Proietta</button>
+                            </div>
+                        `;
+
+                    resultsDiv.appendChild(videoDiv);
+                });
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Errore nella ricerca. Controlla la chiave API.");
+            });
+    }
+
+    function projectVideo(videoId) {
+        fetch(`/set_video/${videoId}`)
+            .then(() => console.log("Video proiettato:", videoId));
+    }
+</script>
+</body>
+</html>
