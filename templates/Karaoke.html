@@ -80,7 +80,7 @@
 
     function searchVideos() {
         const query = document.getElementById('query').value + " karaoke";
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(query)}&embeddable=true&key=${YOUTUBE_API_KEY}`;
 
         fetch(url)
             .then(response => response.json())
@@ -88,15 +88,17 @@
                 const resultsDiv = document.getElementById('results');
                 resultsDiv.innerHTML = '';
 
+                // Filtra i video che possono essere incorporati
                 data.items.forEach(item => {
-                    const videoId = item.id.videoId;
-                    const title = item.snippet.title;
-                    const thumbnail = item.snippet.thumbnails.medium.url;
+                    if (item.id.kind === 'youtube#video') {
+                        const videoId = item.id.videoId;
+                        const title = item.snippet.title;
+                        const thumbnail = item.snippet.thumbnails.medium.url;
 
-                    const videoDiv = document.createElement('div');
-                    videoDiv.className = 'video';
+                        const videoDiv = document.createElement('div');
+                        videoDiv.className = 'video';
 
-                    videoDiv.innerHTML = `
+                        videoDiv.innerHTML = `
                             <img src="${thumbnail}" alt="Thumbnail">
                             <div class="video-info">
                                 <div class="video-title">${title}</div>
@@ -104,7 +106,8 @@
                             </div>
                         `;
 
-                    resultsDiv.appendChild(videoDiv);
+                        resultsDiv.appendChild(videoDiv);
+                    }
                 });
             })
             .catch(err => {
