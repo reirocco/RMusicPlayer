@@ -16,7 +16,7 @@
             color: white;
         }
         .container {
-            max-width: 800px;
+            max-width: 90%;
             margin: 0 auto;
         }
         .folder-button {
@@ -55,7 +55,7 @@
         <h2 class="text-center testo" >Riccioli D'oro - Mira Montaccini</h2>
         <div class="row">
             {% for folder in folders %}
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <button class="btn btn-primary folder-button" type="button" onclick="loadSongs('{{ folder }}')">{{ folder }}</button>
                 </div>
             {% endfor %}
