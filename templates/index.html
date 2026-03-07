@@ -9,7 +9,6 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap.css') }}">
 
     <style>
-
         body {
             background-color: black;
             padding: 20px;
@@ -22,7 +21,7 @@
         .folder-button {
             margin-bottom: 10px;
             width: 100%;
-            font-size: 1.5rem; /* Aumenta la dimensione del testo dei bottoni */font-size: 1.5rem; /* Aumenta la dimensione del testo dei bottoni */
+            font-size: 1.5rem;
         }
         .audio-player {
             position: fixed;
@@ -53,30 +52,28 @@
     <div class="container">
         <h1 class="text-center testo">RMusicPlayer</h1>
         <h2 class="text-center testo" >Riccioli D'oro - Mira Montaccini</h2>
-        <div class="row">
-            {% for folder in folders %}
-                <div class="col-md-4">
-                    <button class="btn btn-primary folder-button" type="button" onclick="loadSongs('{{ folder }}')">{{ folder }}</button>
-                </div>
-            {% endfor %}
+
+        <div id="navigation-bar" style="display: none; margin-bottom: 20px;">
+            <button class="btn btn-warning" onclick="goBack()" style="font-size: 1.2rem;">&#8592; Indietro</button>
+            <span id="current-path-display" class="ms-3 text-light" style="font-size: 1.2rem; font-weight: bold;"></span>
         </div>
 
+        <div class="row" id="folder-container">
+        </div>
 
-    <div class="audio-player ">
+        <div class="audio-player ">
+        </div>
 
-    </div>
-
-    <div class="info-bar ">
-        <audio id="audioPlayer" controls>
-            Your browser does not support the audio element.
-        </audio>
-        <hr>
-        <span id="currentTrackInfo">Nessuna traccia in riproduzione</span>
-    </div>
-
+        <div class="info-bar ">
+            <audio id="audioPlayer" controls>
+                Your browser does not support the audio element.
+            </audio>
+            <hr>
+            <span id="currentTrackInfo">Nessuna traccia in riproduzione</span>
+        </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/bootstrap.bundle.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/player.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/player.js') }}?v=3"></script>
 </body>
 </html>

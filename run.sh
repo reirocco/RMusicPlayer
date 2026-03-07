@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Nome del virtual environment (modifica a piacere)
-venv_name=enviroment
+#venv_name=enviroment
 #pwd
 # Controlla se il virtual environment esiste già
 #if [ ! -d "$venv_name" ]; then
@@ -11,7 +11,7 @@ venv_name=enviroment
 #fi
 
 # Attiva il virtual environment
-source /opt/RMusicPlayer/$venv_name/bin/activate
+#source /opt/RMusicPlayer/$venv_name/bin/activate
 
 # Controlla se esiste il file requirements.txt
 #if [ -f requirements.txt ]; then
