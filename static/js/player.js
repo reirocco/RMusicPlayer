@@ -1,74 +1,142 @@
-let currentSongs = [];
-let currentIndex = 0;
-let folderName = '';
 let currentPath = "";
 let pathHistory = [];
+const ITEMS_PER_PAGE = 12;
+let currentPage = 1;
+let currentFoldersList = [];
 
-// Funzione d'aiuto per codificare correttamente i percorsi senza rompere gli slash (/)
 function encodePath(path) {
     if (!path) return "";
     return path.split('/').map(encodeURIComponent).join('/');
 }
 
-// Carica le cartelle principali all'avvio della pagina
 document.addEventListener("DOMContentLoaded", () => {
-    fetchFolders("");
+    checkAnalysisStatus();
+    setInterval(updateServerStatus, 1500);
 });
 
-// Richiede le cartelle dal backend
+function checkAnalysisStatus() {
+    fetch('/api/analysis_status')
+        .then(res => res.json())
+        .then(data => {
+            if (data.is_running) {
+                document.getElementById('analysis-progress-bar').style.width = data.progress + "%";
+                document.getElementById('analysis-text').innerText = data.text;
+                setTimeout(checkAnalysisStatus, 500);
+            } else {
+                document.getElementById('loading-screen').style.display = 'none';
+                document.getElementById('main-content').style.display = 'block';
+                fetchFolders("");
+            }
+        })
+        .catch(err => {
+            console.error("Errore stato analisi", err);
+            setTimeout(checkAnalysisStatus, 2000);
+        });
+}
+
 function fetchFolders(path) {
     let url = path ? `/api/folders/${encodePath(path)}` : `/api/folders`;
     fetch(url)
-        .then(response => {
-            if (!response.ok) throw new Error("Errore rete");
-            return response.json();
-        })
+        .then(response => response.json())
         .then(folders => {
-            renderFolders(folders, path);
-        })
-        .catch(error => console.error("Errore nel caricamento cartelle:", error));
+            currentPage = 1;
+            currentFoldersList = folders;
+            renderNavAndFolders(path);
+        });
 }
 
-// Genera i bottoni a schermo
-function renderFolders(folders, path) {
-    const container = document.getElementById('folder-container');
-    container.innerHTML = ''; // Svuota i bottoni precedenti
-
+function renderNavAndFolders(path) {
     const navBar = document.getElementById('navigation-bar');
     if (path) {
-        navBar.style.display = 'block'; // Mostra il tasto indietro
-        document.getElementById('current-path-display').innerText = "Cartella: " + path;
+        navBar.style.display = 'flex';
+        let folderNameOnly = path.split('/').pop();
+        document.getElementById('current-path-display').innerText = folderNameOnly;
     } else {
-        navBar.style.display = 'none'; // Nasconde se siamo nella home
+        navBar.style.display = 'none';
     }
+    renderCurrentPage();
+}
 
-    folders.forEach(folder => {
+function renderCurrentPage() {
+    const container = document.getElementById('folder-container');
+    container.innerHTML = '';
+
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    const pageItems = currentFoldersList.slice(startIndex, endIndex);
+
+    pageItems.forEach(folder => {
         const col = document.createElement('div');
-        col.className = 'col-md-4';
+        col.className = 'col-6 col-md-4 col-lg-3';
 
-        const btn = document.createElement('button');
-        // Se la cartella contiene sottocartelle usa btn-danger (rosso), altrimenti btn-primary (blu)
-        btn.className = `btn ${folder.has_subfolders ? 'btn-danger' : 'btn-primary'} folder-button`;
-        btn.innerText = folder.name;
+        const pad = document.createElement('div');
+        pad.className = 'glass-panel glass-card ' + (folder.has_subfolders ? 'folder' : 'playlist');
 
-        btn.onclick = () => {
+        const iconClass = folder.has_subfolders ? 'bi-folder2-open' : 'bi-music-note-list';
+
+        pad.innerHTML = `
+            <i class="bi ${iconClass}"></i>
+            <span class="card-title">${folder.name}</span>
+        `;
+
+        pad.onclick = () => {
             if (folder.has_subfolders) {
-                // Salva il percorso attuale nella cronologia ed entra nella sottocartella
                 pathHistory.push(currentPath);
                 currentPath = folder.path;
                 fetchFolders(currentPath);
             } else {
-                // È l'ultimo livello: carica la musica!
-                loadSongs(folder.path);
+                startServerAutomix(folder.path);
             }
         };
 
-        col.appendChild(btn);
+        col.appendChild(pad);
         container.appendChild(col);
     });
+
+    renderPaginationControls();
 }
 
-// Funzione del bottone Indietro
+function changePage(delta) {
+    currentPage += delta;
+    window.scrollTo(0,0);
+    renderCurrentPage();
+}
+
+function renderPaginationControls() {
+    const pagContainer = document.getElementById('pagination-container');
+    if (!pagContainer) return;
+    pagContainer.innerHTML = '';
+
+    const totalPages = Math.ceil(currentFoldersList.length / ITEMS_PER_PAGE);
+
+    if (totalPages > 1) {
+        pagContainer.style.display = 'flex';
+
+        if (currentPage > 1) {
+            const btnPrev = document.createElement('button');
+            btnPrev.className = 'btn-glass';
+            btnPrev.innerHTML = '<i class="bi bi-chevron-left"></i>';
+            btnPrev.onclick = () => changePage(-1);
+            pagContainer.appendChild(btnPrev);
+        }
+
+        const indicator = document.createElement('span');
+        indicator.className = 'mx-3 fw-bold';
+        indicator.innerText = `${currentPage} / ${totalPages}`;
+        pagContainer.appendChild(indicator);
+
+        if (currentPage < totalPages) {
+            const btnNext = document.createElement('button');
+            btnNext.className = 'btn-glass';
+            btnNext.innerHTML = '<i class="bi bi-chevron-right"></i>';
+            btnNext.onclick = () => changePage(1);
+            pagContainer.appendChild(btnNext);
+        }
+    } else {
+        pagContainer.style.display = 'none';
+    }
+}
+
 function goBack() {
     if (pathHistory.length > 0) {
         currentPath = pathHistory.pop();
@@ -79,44 +147,48 @@ function goBack() {
     }
 }
 
-// Caricamento dei brani
-function loadSongs(folderPath) {
-    fetch(`/get_songs/${encodePath(folderPath)}`)
-        .then(response => response.json())
-        .then(mp3_files => {
-            if (mp3_files.length > 0) {
-                currentSongs = mp3_files;
-                folderName = folderPath;
-                currentIndex = 0;
-                playSong(currentIndex);
-            } else {
-                alert("Nessun file MP3 trovato in questa cartella.");
-            }
-        })
-        .catch(error => console.error('Errore durante il caricamento delle canzoni:', error));
+function startServerAutomix(folderPath) {
+    fetch('/api/play_folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: folderPath })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if(data.status === "error") alert(data.message);
+    });
 }
 
-// Riproduzione Brano
-function playSong(index) {
-    let audioPlayer = document.getElementById('audioPlayer');
-    let currentTrackInfo = document.getElementById('currentTrackInfo');
+function updateServerStatus() {
+    fetch('/api/status')
+        .then(res => res.json())
+        .then(data => {
+            let trackText = document.getElementById('deck-track');
+            let bpmText = document.getElementById('deck-bpm');
+            let keyText = document.getElementById('deck-key');
+            let playPauseBtn = document.getElementById('playPauseBtn');
+            let playPauseIcon = document.getElementById('playPauseIcon');
 
-    if (index < currentSongs.length) {
-        // Codifica in modo sicuro percorso e nome del file
-        let encodedFilePath = encodePath(`${folderName}/${currentSongs[index]}`);
-        audioPlayer.src = `/serve_music/${encodedFilePath}`;
-        audioPlayer.play();
+            if(data.is_playing && data.current_track) {
+                trackText.innerText = data.current_track.split('/').pop().replace('.mp3', '');
+                bpmText.innerText = data.bpm ? Math.round(data.bpm) : "---";
+                keyText.innerText = data.key || "--";
+                playPauseBtn.disabled = false;
 
-        let currentTrackName = currentSongs[index];
-        let nextTrackName = (index + 1 < currentSongs.length) ? currentSongs[index + 1] : currentSongs[0];
-        currentTrackInfo.innerHTML = `Traccia ${index + 1} di ${currentSongs.length} <br> In riproduzione: <span>${currentTrackName}</span> - Prossima traccia: <span>${nextTrackName}</span>`;
-    }
+                if (data.is_paused) {
+                    document.getElementById('deck-status').innerText = "In Pausa";
+                    playPauseIcon.className = "bi bi-play-fill";
+                    playPauseBtn.classList.remove('playing');
+                } else {
+                    document.getElementById('deck-status').innerText = "In Riproduzione";
+                    playPauseIcon.className = "bi bi-pause-fill";
+                    playPauseBtn.classList.add('playing');
+                }
+            }
+        })
+        .catch(() => {});
+}
 
-    audioPlayer.onended = function() {
-        currentIndex++;
-        if (currentIndex >= currentSongs.length) {
-            currentIndex = 0;
-        }
-        playSong(currentIndex);
-    };
+function togglePlayPause() {
+    fetch('/api/toggle_playback', { method: 'POST' });
 }

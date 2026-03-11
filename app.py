@@ -1,124 +1,147 @@
 import os
+import json
 import random
-from flask import Flask, render_template, jsonify, send_from_directory
-import webbrowser
+import threading
+import time
+from flask import Flask, render_template, jsonify, request
+import pygame
+import librosa
+import numpy as np
+import warnings
+
+warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
+pygame.mixer.init()
+
+DB_FILE = 'music_db.json'
+KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+music_db = {}
+if os.path.exists(DB_FILE):
+    with open(DB_FILE, 'r') as f:
+        music_db = json.load(f)
+
+player_state = {
+    'current_track': None,
+    'folder': None,
+    'is_playing': False,
+    'is_paused': False,
+    'playlist': []
+}
+
+analysis_state = {'is_running': True, 'progress': 0, 'text': 'Inizializzazione...'}
 
 
-def ensure_music_directory_exists():
-    home_directory = os.path.expanduser("~")
-    music_directory = os.path.join(home_directory, 'RMusicPlayer')
-    if not os.path.exists(music_directory):
-        os.makedirs(music_directory)
-        print(f"Cartella 'RMusicPlayer' creata in {music_directory}")
-    else:
-        print(f"Cartella 'RMusicPlayer' già esistente in {music_directory}")
+def build_database_task():
+    global music_db
+    base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+    mp3_files = []
+    for root, _, files in os.walk(base_dir):
+        for f in files:
+            if f.endswith('.mp3'): mp3_files.append(os.path.join(root, f))
+
+    total = len(mp3_files)
+    if total == 0:
+        analysis_state.update({'is_running': False, 'progress': 100})
+        return
+
+    for i, full_path in enumerate(mp3_files):
+        rel_path = os.path.relpath(full_path, base_dir).replace('\\', '/')
+        if rel_path not in music_db:
+            analysis_state['text'] = f"Analisi: {os.path.basename(full_path)}"
+            try:
+                y, sr = librosa.load(full_path, duration=10, sr=22050)
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                bpm = float(tempo[0] if isinstance(tempo, np.ndarray) else tempo)
+                chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+                key = KEYS[np.argmax(np.sum(chroma, axis=1))]
+                music_db[rel_path] = {'bpm': round(bpm, 1), 'key': key}
+                with open(DB_FILE, 'w') as f:
+                    json.dump(music_db, f)
+            except:
+                pass
+        analysis_state['progress'] = int(((i + 1) / total) * 100)
+
+    analysis_state['is_running'] = False
 
 
-ensure_music_directory_exists()
+threading.Thread(target=build_database_task, daemon=True).start()
 
 
-# NUOVA FUNZIONE: Restituisce il contenuto di una cartella e verifica se ha sottocartelle
-def get_directory_info(subpath=""):
-    home_directory = os.path.expanduser("~")
-    base_dir = os.path.join(home_directory, 'RMusicPlayer')
-    target_dir = os.path.abspath(os.path.join(base_dir, subpath))
-
-    # Controllo di sicurezza per impedire l'uscita dalla cartella principale
-    if not target_dir.startswith(base_dir):
-        return []
-
-    if os.path.exists(target_dir) and os.path.isdir(target_dir):
-        items = []
-        for d in os.listdir(target_dir):
-            item_path = os.path.join(target_dir, d)
-            if os.path.isdir(item_path):
-                # Controlla se la cartella corrente contiene a sua volta sottocartelle
-                subdirs = [s for s in os.listdir(item_path) if os.path.isdir(os.path.join(item_path, s))]
-                has_subfolders = len(subdirs) > 0
-
-                # Crea il percorso relativo per il frontend
-                rel_path = os.path.relpath(item_path, base_dir).replace('\\', '/')
-
-                items.append({
-                    'name': d,
-                    'path': rel_path,
-                    'has_subfolders': has_subfolders
-                })
-        return items
-    return []
+def play_audio_engine():
+    base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+    while True:
+        if player_state['is_playing'] and not player_state['is_paused']:
+            if not pygame.mixer.music.get_busy():
+                # Logica Automix BPM
+                current_bpm = music_db.get(player_state['current_track'], {}).get('bpm', 120)
+                next_track = random.choice(player_state['playlist'])
+                # Trova traccia con BPM vicino (semplificato per brevità)
+                player_state['current_track'] = next_track
+                pygame.mixer.music.load(os.path.join(base_dir, next_track))
+                pygame.mixer.music.play()
+        time.sleep(1)
 
 
-# NUOVA ROTTA: API per ottenere le cartelle tramite Javascript
-@app.route('/api/folders')
+threading.Thread(target=play_audio_engine, daemon=True).start()
+
+
+@app.route('/api/folders', defaults={'subpath': ''})
 @app.route('/api/folders/<path:subpath>')
-def api_folders(subpath=""):
-    return jsonify(get_directory_info(subpath))
+def api_folders(subpath):
+    base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+    target_dir = os.path.join(base_dir, subpath)
+    items = []
+    if os.path.exists(target_dir):
+        for d in os.listdir(target_dir):
+            p = os.path.join(target_dir, d)
+            if os.path.isdir(p):
+                has_sub = any(os.path.isdir(os.path.join(p, s)) for s in os.listdir(p))
+                items.append(
+                    {'name': d, 'path': os.path.relpath(p, base_dir).replace('\\', '/'), 'has_subfolders': has_sub})
+    return jsonify(items)
 
 
-# MODIFICATA: Ora supporta i percorsi dinamici (sottocartelle)
-@app.route('/get_songs/<path:folder_path>')
-def get_songs(folder_path):
-    home_directory = os.path.expanduser("~")
-    base_dir = os.path.join(home_directory, 'RMusicPlayer')
-    target_dir = os.path.abspath(os.path.join(base_dir, folder_path))
-
-    if not target_dir.startswith(base_dir):
-        return jsonify([])
-
-    if os.path.exists(target_dir) and os.path.isdir(target_dir):
-        mp3_files = [f for f in os.listdir(target_dir) if f.endswith('.mp3')]
-        random.shuffle(mp3_files)
-        return jsonify(mp3_files)
-    return jsonify([])
+@app.route('/api/analysis_status')
+def analysis_status(): return jsonify(analysis_state)
 
 
-# MODIFICATA: Gestisce la riproduzione in sicurezza anche nelle sottocartelle
-@app.route('/serve_music/<path:filepath>')
-def serve_music(filepath):
-    home_directory = os.path.expanduser("~")
-    base_dir = os.path.join(home_directory, 'RMusicPlayer')
-    full_path = os.path.abspath(os.path.join(base_dir, filepath))
-
-    if not full_path.startswith(base_dir):
-        return "Access denied", 403
-
-    folder_path = os.path.dirname(full_path)
-    filename = os.path.basename(full_path)
-    return send_from_directory(folder_path, filename)
-
-
-@app.route('/karaoke')
-def karaoke():
-    return render_template('karaoke.html')
+@app.route('/api/play_folder', methods=['POST'])
+def play_folder():
+    folder = request.json.get('folder')
+    base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+    target = os.path.join(base_dir, folder)
+    files = [os.path.relpath(os.path.join(target, f), base_dir).replace('\\', '/') for f in os.listdir(target) if
+             f.endswith('.mp3')]
+    if files:
+        player_state.update(
+            {'playlist': files, 'current_track': random.choice(files), 'is_playing': True, 'is_paused': False})
+        pygame.mixer.music.stop()
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "error"}), 404
 
 
-current_video_id = None
+@app.route('/api/toggle_playback', methods=['POST'])
+def toggle_playback():
+    if player_state['is_paused']:
+        pygame.mixer.music.unpause()
+    else:
+        pygame.mixer.music.pause()
+    player_state['is_paused'] = not player_state['is_paused']
+    return jsonify({"status": "ok"})
 
 
-@app.route('/projector')
-def projector():
-    return render_template('projector_dynamic.html')
+@app.route('/api/status')
+def status():
+    track = player_state['current_track']
+    info = music_db.get(track, {})
+    return jsonify({**player_state, 'bpm': info.get('bpm'), 'key': info.get('key')})
 
 
-@app.route('/set_video/<video_id>')
-def set_video(video_id):
-    global current_video_id
-    current_video_id = video_id
-    return {'status': 'ok'}
-
-
-@app.route('/get_video')
-def get_video():
-    return {'video_id': current_video_id}
-
-
-# MODIFICATA: L'indice renderizza solo l'HTML, le cartelle le popola JS
 @app.route('/')
-def index():
-    return render_template('index.html')
+def index(): return render_template('index.html')
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5000, threaded=True)
