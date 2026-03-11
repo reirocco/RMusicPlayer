@@ -8,7 +8,8 @@ import sys
 import multiprocessing
 import uuid
 import datetime
-from flask import Flask, render_template, jsonify, request, send_file
+import glob
+from flask import Flask, render_template, jsonify, request, send_file, abort
 import pygame
 import warnings
 
@@ -16,6 +17,7 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
+# Configurazione Audio
 pygame.mixer.pre_init(44100, -16, 2, 4096)
 pygame.init()
 pygame.mixer.init()
@@ -27,9 +29,15 @@ CHANNEL_END_EVENTS = {
     1: pygame.USEREVENT + 1
 }
 
-DB_FILE = 'music_db.json'
-STATUS_FILE = 'analysis_status.json'
-ANALYZER_SCRIPT = 'analyzer.py'
+# Percorsi Assoluti per sicurezza
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+DB_FILE = os.path.join(BASE_DIR, 'music_db.json')
+STATUS_FILE = os.path.join(BASE_DIR, 'analysis_status.json')
+ANALYZER_SCRIPT = os.path.join(BASE_DIR, 'analyzer.py')
+
+if not os.path.exists(MUSIC_ROOT_DIR):
+    os.makedirs(MUSIC_ROOT_DIR, exist_ok=True)
 
 music_db = {}
 
@@ -48,6 +56,27 @@ player_state = {
 
 audio_lock = threading.Lock()
 
+def validate_path(base_dir, relative_path):
+    if not relative_path:
+        return base_dir
+    safe_base = os.path.abspath(base_dir)
+    target_path = os.path.abspath(os.path.join(base_dir, relative_path))
+    if not target_path.startswith(safe_base):
+        print(f"[SECURITY] Path Traversal blocked: {relative_path}")
+        raise PermissionError("Accesso negato")
+    return target_path
+
+def clean_startup_temps():
+    temps = glob.glob(os.path.join(BASE_DIR, "temp_*.wav")) + \
+            glob.glob(os.path.join(BASE_DIR, "temp_*.tmp"))
+    if temps:
+        print(f"[System] Pulizia di {len(temps)} file temporanei orfani...")
+        for f in temps:
+            try: os.remove(f)
+            except: pass
+
+clean_startup_temps()
+
 def load_db():
     global music_db
     if os.path.exists(DB_FILE):
@@ -58,9 +87,8 @@ def load_db():
 load_db()
 
 def start_analyzer_process():
-    analyzer_path = os.path.join(os.path.dirname(__file__), ANALYZER_SCRIPT)
-    if os.path.exists(analyzer_path):
-        subprocess.Popen([sys.executable, analyzer_path])
+    if os.path.exists(ANALYZER_SCRIPT):
+        subprocess.Popen([sys.executable, ANALYZER_SCRIPT])
 
 start_analyzer_process()
 
@@ -122,8 +150,7 @@ def pop_next_track():
     chosen = pool[0]
     if chosen in queue:
         queue.remove(chosen)
-        
-    print(f"[Automix] Scelta '{chosen}' (rimanenti in coda: {len(queue)})")
+    
     return chosen
 
 def preload_worker(mp3_path, wav_output_path, gain_db=0.0, cue_point_sec=0.0):
@@ -131,14 +158,11 @@ def preload_worker(mp3_path, wav_output_path, gain_db=0.0, cue_point_sec=0.0):
         if sys.platform != "win32": os.nice(19)
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(mp3_path)
-        
         if cue_point_sec > 0:
             start_ms = int(cue_point_sec * 1000)
             if start_ms < len(audio): audio = audio[start_ms:]
-        
         if gain_db != 0.0:
             audio = audio.apply_gain(gain_db)
-            
         tmp_path = wav_output_path + ".tmp"
         audio.export(tmp_path, format="wav")
         os.rename(tmp_path, wav_output_path)
@@ -153,12 +177,11 @@ def schedule_preload():
         next_track_path = pop_next_track()
         if not next_track_path: return 
 
-        unique_wav = f"temp_{uuid.uuid4().hex}.wav"
+        unique_wav = os.path.join(BASE_DIR, f"temp_{uuid.uuid4().hex}.wav")
         player_state['next_track_queued'] = next_track_path
         player_state['next_wav_path'] = unique_wav
         
-        base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
-        full_mp3_path = os.path.join(base_dir, next_track_path)
+        full_mp3_path = os.path.join(MUSIC_ROOT_DIR, next_track_path)
         
         track_info = music_db.get(next_track_path, {})
         gain = track_info.get('gain', 0.0)
@@ -169,12 +192,12 @@ def schedule_preload():
         p.start()
 
 def cleanup_old_wavs():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
     current_wav = player_state.get('next_wav_path')
-    for f in os.listdir(base_dir):
-        if f.startswith("temp_") and f.endswith(".wav") and f != current_wav:
-            try: os.remove(os.path.join(base_dir, f))
-            except: pass
+    for f in glob.glob(os.path.join(BASE_DIR, "temp_*.wav")):
+        if current_wav and os.path.abspath(f) == os.path.abspath(current_wav):
+            continue
+        try: os.remove(f)
+        except: pass
 
 def crossfade_to_next():
     global player_state
@@ -238,15 +261,20 @@ threading.Thread(target=audio_engine_loop, daemon=True).start()
 @app.route('/api/play_folder', methods=['POST'])
 def play_folder():
     folder = request.json.get('folder')
-    base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
-    target_dir = os.path.join(base_dir, folder)
+    if folder is None: folder = "" 
+    
     try:
+        target_dir = validate_path(MUSIC_ROOT_DIR, folder)
+        if not os.path.exists(target_dir):
+             return jsonify({"status": "error", "message": "Cartella non trovata"}), 404
+
         new_playlist = []
         for root, _, files in os.walk(target_dir):
             for file in files:
                 if file.endswith('.mp3'):
                     full_path = os.path.join(root, file)
-                    new_playlist.append(os.path.relpath(full_path, base_dir).replace('\\', '/'))
+                    rel_path = os.path.relpath(full_path, MUSIC_ROOT_DIR).replace('\\', '/')
+                    new_playlist.append(rel_path)
         
         if not new_playlist:
             return jsonify({"status": "error", "message": "Nessun file audio trovato."}), 404
@@ -268,8 +296,8 @@ def play_folder():
             
             first_track = pop_next_track()
             if first_track:
-                full_path = os.path.join(base_dir, first_track)
-                tmp_wav = f"temp_first_{uuid.uuid4().hex}.wav"
+                full_path = os.path.join(MUSIC_ROOT_DIR, first_track)
+                tmp_wav = os.path.join(BASE_DIR, f"temp_first_{uuid.uuid4().hex}.wav")
                 
                 track_info = music_db.get(first_track, {})
                 gain = track_info.get('gain', 0.0)
@@ -288,11 +316,49 @@ def play_folder():
                     player_state['next_wav_path'] = tmp_wav
                     crossfade_to_next()
                 except Exception as e:
-                    return jsonify({"status": "error", "message": "Impossibile caricare la prima traccia."}), 500
+                    return jsonify({"status": "error", "message": f"Errore audio: {str(e)}"}), 500
         
         return jsonify({"status": "ok"})
+    except PermissionError:
+        return jsonify({"status": "error", "message": "Accesso Negato"}), 403
     except Exception as e:
         return jsonify({"status": "error", "message": "Errore interno."}), 500
+
+@app.route('/api/folders', defaults={'subpath': ''})
+@app.route('/api/folders/<path:subpath>')
+def api_folders(subpath):
+    try:
+        target_dir = validate_path(MUSIC_ROOT_DIR, subpath)
+    except PermissionError: abort(403)
+
+    items = []
+    has_files_here = False
+    
+    if os.path.exists(target_dir):
+        try:
+            for f in os.listdir(target_dir):
+                if f.endswith('.mp3'):
+                    has_files_here = True
+                    break
+            
+            for d in os.listdir(target_dir):
+                p = os.path.join(target_dir, d)
+                if os.path.isdir(p):
+                    if not p.startswith(MUSIC_ROOT_DIR): continue
+                    has_sub = any(os.path.isdir(os.path.join(p, s)) for s in os.listdir(p))
+                    items.append({
+                        'name': d, 
+                        'path': os.path.relpath(p, MUSIC_ROOT_DIR).replace('\\', '/'), 
+                        'has_subfolders': has_sub,
+                        'track_count': len([f for f in os.listdir(p) if f.endswith('.mp3')])
+                    })
+        except OSError: pass
+        
+    return jsonify({
+        'current_path': subpath,
+        'has_files': has_files_here,
+        'folders': items
+    })
 
 @app.route('/api/next_track', methods=['POST'])
 def next_track():
@@ -322,10 +388,20 @@ def status():
 def admin_reanalyze():
     global music_db
     try:
+        # Reset Totale
         music_db = {}
         with open(DB_FILE, 'w') as f: json.dump({}, f)
         start_analyzer_process()
-        return jsonify({"status": "ok", "message": "Analisi riavviata."})
+        return jsonify({"status": "ok", "message": "Reset DB e Rianalisi Completa avviata."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/admin/scan_new', methods=['POST'])
+def admin_scan_new():
+    try:
+        # Avvia analyzer senza cancellare DB. L'analyzer è intelligente e salta i file già hash-ati.
+        start_analyzer_process()
+        return jsonify({"status": "ok", "message": "Scansione nuovi file avviata."})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -344,21 +420,17 @@ def admin_db_content():
         except: pass
     return jsonify({})
 
-@app.route('/api/folders', defaults={'subpath': ''})
-@app.route('/api/folders/<path:subpath>')
-def api_folders(subpath):
-    base_dir = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
-    target_dir = os.path.join(base_dir, subpath)
-    items = []
-    if os.path.exists(target_dir):
-        try:
-            for d in os.listdir(target_dir):
-                p = os.path.join(target_dir, d)
-                if os.path.isdir(p):
-                    has_sub = any(os.path.isdir(os.path.join(p, s)) for s in os.listdir(p))
-                    items.append({'name': d, 'path': os.path.relpath(p, base_dir).replace('\\', '/'), 'has_subfolders': has_sub})
-        except OSError: pass
-    return jsonify(items)
+@app.route('/api/admin/restart', methods=['POST'])
+def admin_restart():
+    def restart_server():
+        time.sleep(1)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    threading.Thread(target=restart_server).start()
+    return jsonify({"status": "ok", "message": "Riavvio in corso..."})
+
+@app.route('/api/ping')
+def ping():
+    return jsonify({"status": "pong", "time": time.time()})
 
 @app.route('/api/analysis_status')
 def analysis_status():
@@ -380,7 +452,6 @@ def toggle_playback():
 @app.route('/')
 def index(): return render_template('index.html')
 
-# --- 404 HANDLER ---
 @app.errorhandler(404)
 def page_not_found(e):
     return render_template('404.html'), 404

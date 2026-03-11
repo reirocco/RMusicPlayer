@@ -5,222 +5,299 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RMusicPlayer</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 
     <style>
         :root {
             --text-main: #ffffff;
-            --text-muted: #b0b0b0;
-            --glass-bg: rgba(255, 255, 255, 0.07);
-            --glass-border: rgba(255, 255, 255, 0.15);
-            --glass-hover: rgba(255, 255, 255, 0.15);
-            --accent-color: #00d2ff;
+            --text-muted: #94a3b8;
+            --bg-dark: #0f0518;
+            --accent-color: #d946ef;
+            --accent-glow: rgba(217, 70, 239, 0.4);
+            --secondary-color: #8b5cf6;
+            --glass-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.1);
         }
 
         body {
-            background: linear-gradient(135deg, #0f172a, #1e1b4b, #311bb6);
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-dark);
+            background-image:
+                radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(217, 70, 239, 0.15) 0%, transparent 40%);
             background-attachment: fixed;
             color: var(--text-main);
-            font-family: system-ui, -apple-system, sans-serif;
             padding-bottom: 160px;
             overflow-x: hidden;
             min-height: 100vh;
         }
 
-        /* Glassmorphism Classes */
-        .glass-panel {
-            background: var(--glass-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-        }
+        /* --- HEADER & STATUS --- */
+        .top-bar { display: flex; align-items: center; justify-content: space-between; padding: 25px 30px; margin-bottom: 10px; }
+        .logo-container { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+        .logo-icon svg { width: 42px; height: 42px; filter: drop-shadow(0 0 8px rgba(217, 70, 239, 0.5)); }
+        .logo-text { font-size: 1.6rem; line-height: 1; color: white; letter-spacing: -0.5px; }
+        .logo-text .light { font-weight: 300; opacity: 0.9; }
+        .logo-text .bold { font-weight: 800; color: var(--accent-color); }
+        .server-status { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 6px 12px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 8px #4ade80; transition: background 0.3s; }
+        .status-dot.yellow { background: #facc15; box-shadow: 0 0 8px #facc15; }
+        .status-dot.red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
 
-        .glass-modal {
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            color: white;
-        }
+        /* --- GLASS COMPONENTS --- */
+        .glass-panel { background: var(--glass-bg); backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 24px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2); }
 
-        /* Loading Screen */
-        #loading-screen {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(20px); z-index: 9999;
-            display: flex; flex-direction: column;
-            justify-content: center; align-items: center;
-        }
+        /* --- CARDS --- */
+        .glass-card { display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 30px 20px; border-radius: 24px; background: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%); border: 1px solid var(--glass-border); color: var(--text-main); text-decoration: none; position: relative; overflow: hidden; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); height: 100%; min-height: 160px; }
+        .glass-card.folder { background: linear-gradient(145deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.2) 100%); border-color: rgba(255,255,255,0.05); }
+        .glass-card.playlist { background: linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%); border-color: rgba(255,255,255,0.15); }
+        .glass-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at center, var(--accent-glow) 0%, transparent 70%); opacity: 0; transition: opacity 0.4s ease; z-index: 0; }
+        .glass-card:hover { transform: translateY(-8px) scale(1.02); border-color: rgba(255,255,255,0.3); box-shadow: 0 20px 40px -10px var(--accent-glow); }
+        .glass-card:hover::before { opacity: 0.2; }
+        .glass-card i { font-size: 3rem; margin-bottom: 15px; z-index: 1; transition: transform 0.4s ease; text-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        .glass-card:hover i { transform: scale(1.1) rotate(-5deg); }
+        .glass-card.folder i { color: #a78bfa; opacity: 0.8; }
+        .glass-card.playlist i { color: #f472b6; opacity: 1; }
+        .card-title { font-size: 1.1rem; font-weight: 600; text-align: center; z-index: 1; letter-spacing: 0.5px; }
 
-        /* Cards */
-        .glass-card {
-            display: flex; flex-direction: column;
-            justify-content: center; align-items: center;
-            padding: 25px 15px; transition: all 0.3s ease;
-            cursor: pointer; height: 100%; min-height: 140px;
-            color: var(--text-main); text-decoration: none;
-        }
-        .glass-card:hover { background: var(--glass-hover); transform: translateY(-5px); border-color: rgba(255, 255, 255, 0.3); }
-        .glass-card i { font-size: 2.8rem; margin-bottom: 12px; }
-        .glass-card.folder i { color: #a5b4fc; }
-        .glass-card.playlist i { color: #86efac; }
-        .card-title { font-size: 1.2rem; font-weight: 600; text-align: center; }
+        /* --- PLAYER DOCK --- */
+        .player-bar-wrapper { position: fixed; bottom: 20px; left: 0; right: 0; z-index: 1000; display: flex; justify-content: center; pointer-events: none; }
+        .player-glass-deck { width: 95%; max-width: 1000px; pointer-events: auto; background: rgba(15, 10, 25, 0.85); backdrop-filter: blur(25px); border: 1px solid rgba(255,255,255,0.15); border-radius: 30px; padding: 12px 30px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+        .track-name { font-size: 1rem; font-weight: 700; color: white; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px; }
+        .track-status { font-size: 0.7rem; color: var(--accent-color); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+        .btn-play-pause { background: var(--text-main); color: black; width: 55px; height: 55px; border-radius: 50%; font-size: 1.8rem; display: flex; align-items: center; justify-content: center; border: none; margin: 0 15px; box-shadow: 0 0 20px rgba(255,255,255,0.3); transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .btn-play-pause:hover { transform: scale(1.1); box-shadow: 0 0 30px rgba(255,255,255,0.5); }
+        .btn-play-pause.playing { background: var(--accent-color); box-shadow: 0 0 30px var(--accent-glow); color: white; }
+        .btn-control { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.05); color: var(--text-muted); width: 42px; height: 42px; border-radius: 12px; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; transition: all 0.2s; margin: 0 5px; position: relative; }
+        .btn-control:hover:not(:disabled) { background: rgba(255,255,255,0.15); color: white; transform: translateY(-2px); }
+        .tech-info { background: rgba(0,0,0,0.3); padding: 5px 12px; border-radius: 10px; text-align: center; margin-left: 10px; border: 1px solid rgba(255,255,255,0.05); }
+        .tech-info span { font-size: 0.65rem; color: var(--text-muted); display: block; text-transform: uppercase; }
+        .tech-info strong { font-size: 1.1rem; color: var(--accent-color); font-family: 'Outfit', monospace; }
 
-        /* Controls */
-        .btn-glass {
-            background: var(--glass-bg); backdrop-filter: blur(10px);
-            border: 1px solid var(--glass-border); color: var(--text-main);
-            padding: 10px 25px; border-radius: 50px;
-        }
-        .player-bar-wrapper { position: fixed; bottom: 20px; left: 20px; right: 20px; z-index: 1000; display: flex; justify-content: center; }
-        .player-glass-deck { width: 100%; max-width: 1200px; display: flex; align-items: center; justify-content: space-between; padding: 15px 25px; }
+        #loading-screen { background: #0a0410; z-index: 10000; }
 
-        .track-name { font-size: 1.1rem; font-weight: bold; color: var(--accent-color); margin: 0; }
-        .track-status { font-size: 0.85rem; color: var(--text-muted); margin: 0; }
+        .offcanvas.glass-offcanvas { background: rgba(10, 5, 20, 0.98); border-left: 1px solid rgba(255,255,255,0.1); color: #ffffff; }
+        .queue-item-full { padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; font-size: 0.95rem; color: #eeeeee; transition: background 0.2s; }
+        .queue-item-full:hover { background: rgba(255,255,255,0.08); border-left: 3px solid var(--accent-color); color: #ffffff; }
 
-        .btn-play-pause {
-            background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
-            color: var(--text-main); width: 60px; height: 60px; border-radius: 50%;
-            font-size: 2rem; display: flex; align-items: center; justify-content: center; margin-right: 15px;
-        }
-        .btn-play-pause.playing { background: var(--accent-color); color: #000; border: none; }
+        /* Settings Modal - Redesign */
+        .glass-modal { background: #1a1025; border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); overflow: hidden; }
+        .modal-header { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 20px 25px; background: rgba(0,0,0,0.2); }
+        .modal-body { padding: 30px; }
 
-        .btn-control {
-            background: transparent; border: 1px solid rgba(255,255,255,0.2);
-            color: var(--text-main); width: 50px; height: 50px; border-radius: 50%;
-            font-size: 1.5rem; display: flex; align-items: center; justify-content: center;
-            transition: all 0.2s; margin-left: 10px;
-        }
-        .btn-control:hover { background: rgba(255,255,255,0.2); }
-        .btn-control:active { transform: scale(0.95); }
+        /* Griglia principale a 2 colonne */
+        .settings-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
 
-        .tech-info { font-size: 0.8rem; color: var(--text-muted); text-align: right; }
-        .tech-info strong { font-size: 1.3rem; color: var(--text-main); display: block; }
+        .setting-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 20px 15px; text-align: center; cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 140px; }
+        .setting-card:hover { background: rgba(255,255,255,0.08); transform: translateY(-3px); border-color: rgba(255,255,255,0.2); }
+        .setting-icon-wrapper { width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; margin-bottom: 15px; font-size: 1.5rem; }
 
-        .nav-bar-custom { display: flex; align-items: center; padding: 10px 20px; margin-bottom: 25px; }
-        .nav-bar-custom button { background: transparent; border: none; color: var(--text-main); font-size: 1.5rem; margin-right: 15px; }
+        .setting-card.primary:hover .setting-icon-wrapper { background: rgba(13, 110, 253, 0.2); color: #60a5fa; }
+        .setting-card.success:hover .setting-icon-wrapper { background: rgba(25, 135, 84, 0.2); color: #4ade80; }
+        .setting-card.danger:hover .setting-icon-wrapper { background: rgba(220, 53, 69, 0.2); color: #ff6b6b; }
+        .setting-card.warning:hover .setting-icon-wrapper { background: rgba(255, 193, 7, 0.2); color: #facc15; }
+        .setting-card.info:hover .setting-icon-wrapper { background: rgba(13, 202, 240, 0.2); color: #0dcaf0; }
 
-        #analysis-text { color: #ffffff !important; font-size: 0.9rem; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(255,255,255,0.3); }
-        #eta-text { color: #00d2ff; font-size: 0.85rem; font-weight: 300; margin-top: 5px; }
+        .setting-label { font-weight: 600; font-size: 0.95rem; margin-bottom: 5px; color: #fff; }
+        .setting-desc { font-size: 0.75rem; color: var(--text-muted); line-height: 1.2; }
 
-        /* Queue Offcanvas */
-        .offcanvas.glass-offcanvas { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(20px); color: white; border-left: 1px solid var(--glass-border); }
-        .queue-list-full { list-style: none; padding: 0; margin: 0; }
-        .queue-item-full { padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; font-size: 0.9rem; }
-        .queue-item-full i { margin-right: 10px; color: var(--accent-color); }
+        /* Area opzioni analisi nascosta */
+        #analysis-options { display: none; text-align: center; padding-top: 10px; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 
-        /* Settings Modal */
-        .modal-content.glass-modal { border-radius: 20px; }
-        .setting-item { padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; }
-        .setting-item:last-child { border-bottom: none; }
-        .setting-label { font-weight: 500; }
-        .setting-desc { font-size: 0.8rem; color: var(--text-muted); }
+        .nav-bar-custom { display: flex; align-items: center; padding: 10px 0; margin-bottom: 20px; }
+        .nav-path { font-weight: 300; letter-spacing: 1px; }
+        .progress-bar.bg-info { background: linear-gradient(90deg, var(--secondary-color), var(--accent-color)); box-shadow: 0 0 15px var(--accent-glow); }
     </style>
 </head>
 <body>
 
     <div id="loading-screen">
-        <div class="spinner-border text-info" role="status"></div>
-        <h3 class="mt-3">Analisi Libreria Musicale...</h3>
-        <div class="progress w-50 mt-3" style="height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px;">
-            <div id="analysis-progress-bar" class="progress-bar bg-info" style="width: 0%; transition: width 0.5s;"></div>
+        <div class="spinner-grow text-primary" role="status" style="width: 3rem; height: 3rem; color: var(--accent-color)!important;"></div>
+        <h4 class="mt-4 fw-light text-white" style="letter-spacing: 2px;">RMusic<span style="font-weight:700; color:var(--accent-color)">Player</span></h4>
+        <div style="width: 200px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 20px; overflow: hidden;">
+            <div id="analysis-progress-bar" class="progress-bar bg-info" style="width: 0%; height: 100%; transition: width 0.3s;"></div>
         </div>
-        <div id="analysis-text" class="mt-3">Inizializzazione Analisi...</div>
-        <div id="eta-text">Tempo stimato: Calcolo...</div>
+        <div id="analysis-text" class="mt-3 text-muted small">Avvio sistema...</div>
+        <div id="eta-text" class="small" style="color: var(--secondary-color)"></div>
     </div>
 
-    <div id="main-content" style="display: none;" class="container-fluid">
-        <h1 class="text-center header-title">RMusicPlayer</h1>
-        <h2 class="text-center header-subtitle">AutoMix Edition</h2>
+    <div id="main-content" style="display: none;" class="container-fluid px-4">
 
-        <div id="navigation-bar" class="nav-bar-custom glass-panel" style="display: none;">
-            <button onclick="goBack()"><i class="bi bi-arrow-left-circle"></i></button>
-            <span id="current-path-display" class="nav-path fs-4 fw-bold"></span>
+        <div class="top-bar">
+            <a href="/" class="logo-container">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#d946ef" />
+                                <stop offset="100%" style="stop-color:#8b5cf6" />
+                            </linearGradient>
+                        </defs>
+                        <path d="M20 50L20 50" stroke="url(#logoGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+                            <animate attributeName="d" values="M20 40L20 60;M20 30L20 70;M20 40L20 60" dur="1.5s" repeatCount="indefinite" />
+                        </path>
+                        <path d="M40 50L40 50" stroke="url(#logoGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+                            <animate attributeName="d" values="M40 20L40 80;M40 10L40 90;M40 20L40 80" dur="1.5s" repeatCount="indefinite" begin="0.2s" />
+                        </path>
+                        <path d="M60 50L60 50" stroke="url(#logoGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+                            <animate attributeName="d" values="M60 30L60 70;M60 20L60 80;M60 30L60 70" dur="1.5s" repeatCount="indefinite" begin="0.4s" />
+                        </path>
+                        <path d="M80 50L80 50" stroke="url(#logoGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+                            <animate attributeName="d" values="M80 40L80 60;M80 35L80 65;M80 40L80 60" dur="1.5s" repeatCount="indefinite" begin="0.1s" />
+                        </path>
+                    </svg>
+                </div>
+                <div class="logo-text">
+                    <span class="bold">RMusic</span><span class="light">Player</span>
+                </div>
+            </a>
+
+            <div class="server-status">
+                <div class="status-dot" id="ping-dot"></div>
+                <span id="ping-text">-- ms</span>
+            </div>
+        </div>
+
+        <div id="navigation-bar" class="nav-bar-custom" style="display: none;">
+            <button class="btn btn-control" onclick="goBack()" style="width:auto; padding: 0 15px;">
+                <i class="bi bi-arrow-left me-2"></i> Indietro
+            </button>
+            <span id="current-path-display" class="nav-path fs-4 ms-3"></span>
         </div>
 
         <div class="row g-4" id="folder-container"></div>
         <div id="pagination-container" class="pagination-container" style="display: none;"></div>
     </div>
 
-    <!-- Offcanvas Queue -->
     <div class="offcanvas offcanvas-end glass-offcanvas" tabindex="-1" id="queueOffcanvas">
-        <div class="offcanvas-header">
-            <h5 class="offcanvas-title"><i class="bi bi-collection-play me-2"></i>Coda Automix</h5>
+        <div class="offcanvas-header border-bottom border-secondary border-opacity-10">
+            <h5 class="offcanvas-title fw-bold"><span style="color:var(--accent-color)">///</span> CODA AUTOMIX</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
         </div>
-        <div class="offcanvas-body">
-            <p class="text-muted small">Brani rimanenti nel pool:</p>
+        <div class="offcanvas-body p-0">
             <ul class="queue-list-full" id="full-queue-list"></ul>
         </div>
     </div>
 
-    <!-- Settings Modal -->
+    <!-- Settings Modal Aggiornato -->
     <div class="modal fade" id="settingsModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content glass-modal">
-                <div class="modal-header border-0">
-                    <h5 class="modal-title"><i class="bi bi-gear-fill me-2"></i>Impostazioni</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                <div class="modal-header border-0 justify-content-center pt-4">
+                    <h5 class="modal-title fw-bold fs-4">Impostazioni Sistema</h5>
+                    <button type="button" class="btn-close btn-close-white position-absolute end-0 top-0 m-4" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body p-0">
-                    <div class="setting-item">
-                        <div>
-                            <div class="setting-label">Rianalisi Completa</div>
-                            <div class="setting-desc">Cancella il DB e ricalcola BPM/Key/Volume.</div>
+                <div class="modal-body">
+
+                    <!-- Griglia Principale -->
+                    <div class="settings-grid" id="settings-grid">
+
+                        <!-- Card 1: Rianalisi (Apre opzioni) -->
+                        <div class="setting-card primary" onclick="showAnalysisOptions()">
+                            <div class="setting-icon-wrapper">
+                                <i class="bi bi-music-note-list"></i>
+                            </div>
+                            <div class="setting-label">Analisi Database</div>
+                            <div class="setting-desc">Gestisci libreria musicale.</div>
                         </div>
-                        <button class="btn btn-sm btn-danger" onclick="triggerReanalyze()"><i class="bi bi-arrow-repeat"></i> Avvia</button>
-                    </div>
-                    <div class="setting-item">
-                        <div>
-                            <div class="setting-label">Backup Database</div>
-                            <div class="setting-desc">Scarica copia di music_db.json.</div>
+
+                        <!-- Card 2: Backup -->
+                        <div class="setting-card success" onclick="downloadBackup()">
+                            <div class="setting-icon-wrapper">
+                                <i class="bi bi-database-down"></i>
+                            </div>
+                            <div class="setting-label">Backup</div>
+                            <div class="setting-desc">Scarica database JSON.</div>
                         </div>
-                        <button class="btn btn-sm btn-success" onclick="downloadBackup()"><i class="bi bi-download"></i> Scarica</button>
-                    </div>
-                    <div class="setting-item">
-                        <div>
-                            <div class="setting-label">Visualizza JSON</div>
-                            <div class="setting-desc">Ispeziona i dati grezzi del DB.</div>
+
+                        <!-- Card 3: Debug -->
+                        <div class="setting-card info" onclick="viewDbContent()">
+                            <div class="setting-icon-wrapper">
+                                <i class="bi bi-terminal"></i>
+                            </div>
+                            <div class="setting-label">Debug</div>
+                            <div class="setting-desc">Vedi dati grezzi.</div>
                         </div>
-                        <button class="btn btn-sm btn-primary" onclick="viewDbContent()"><i class="bi bi-code-slash"></i> Vedi</button>
+
+                        <!-- Card 4: Riavvio -->
+                        <div class="setting-card warning" onclick="triggerRestart()">
+                            <div class="setting-icon-wrapper">
+                                <i class="bi bi-power"></i>
+                            </div>
+                            <div class="setting-label">Riavvia Server</div>
+                            <div class="setting-desc">Ricarica l'applicazione.</div>
+                        </div>
                     </div>
+
+                    <!-- Opzioni Analisi (Nascoste di default) -->
+                    <div id="analysis-options">
+                        <h5 class="text-white mb-4">Scegli metodo di analisi</h5>
+                        <div class="d-flex justify-content-center gap-3">
+                            <button class="btn btn-outline-light px-4 py-3" onclick="hideAnalysisOptions()">
+                                <i class="bi bi-arrow-left me-2"></i>Indietro
+                            </button>
+
+                            <button class="btn btn-success px-4 py-3" onclick="triggerScanNew()">
+                                <div class="fw-bold"><i class="bi bi-plus-circle me-2"></i>Solo Nuovi</div>
+                                <div class="small opacity-75">Veloce</div>
+                            </button>
+
+                            <button class="btn btn-danger px-4 py-3" onclick="triggerReanalyze()">
+                                <div class="fw-bold"><i class="bi bi-trash3 me-2"></i>Reset Totale</div>
+                                <div class="small opacity-75">Lento</div>
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer border-0 justify-content-center pb-4">
+                    <small class="text-muted">RMusicPlayer v3.1</small>
                 </div>
             </div>
         </div>
     </div>
 
     <div class="player-bar-wrapper">
-        <div class="glass-panel player-glass-deck">
-            <div class="player-left">
-                <p class="track-status" id="deck-status">Standby</p>
-                <p class="track-name" id="deck-track">Seleziona Playlist</p>
+        <div class="player-glass-deck">
+            <div class="track-info-group">
+                <p class="track-name" id="deck-track">RMusicPlayer</p>
+                <p class="track-status" id="deck-status">Ready to mix</p>
             </div>
 
-            <div class="player-center d-flex align-items-center">
+            <div class="d-flex align-items-center">
+                <button id="queueBtn" class="btn-control" onclick="openQueue()" disabled title="Coda">
+                    <i class="bi bi-list-music"></i>
+                    <span class="badge bg-danger rounded-circle p-1 position-absolute top-0 end-0" id="queue-badge" style="display:none; width:8px; height:8px;"></span>
+                </button>
+
                 <button id="playPauseBtn" class="btn-play-pause" onclick="togglePlayPause()" disabled>
-                    <i class="bi bi-play-fill" id="playPauseIcon"></i>
+                    <i class="bi bi-play-fill" id="playPauseIcon" style="margin-left: 4px;"></i>
                 </button>
-                <button id="nextBtn" class="btn-control" onclick="triggerNextTrack()" disabled title="Automix Next">
-                    <i class="bi bi-fast-forward-fill"></i>
+
+                <button id="nextBtn" class="btn-control" onclick="triggerNextTrack()" disabled title="Mix Next">
+                    <i class="bi bi-skip-forward-fill"></i>
                 </button>
-                <button id="queueBtn" class="btn-control" onclick="openQueue()" disabled title="Apri Coda">
-                    <i class="bi bi-list-ul"></i>
-                    <span class="badge bg-danger rounded-pill" id="queue-badge" style="font-size:0.6rem; vertical-align:top; display:none;">0</span>
-                </button>
-                <!-- Tasto Settings -->
-                <button class="btn-control" onclick="openSettings()" title="Impostazioni">
-                    <i class="bi bi-gear"></i>
+
+                <button class="btn-control ms-3" onclick="openSettings()" title="Settings">
+                    <i class="bi bi-gear-fill"></i>
                 </button>
             </div>
 
-            <div class="player-right">
-                <div class="tech-info">BPM<strong id="deck-bpm">---</strong></div>
-                <div class="tech-info ms-4">KEY<strong id="deck-key">--</strong></div>
+            <div class="d-flex">
+                <div class="tech-info"><span>BPM</span><strong id="deck-bpm">--</strong></div>
+                <div class="tech-info"><span>KEY</span><strong id="deck-key">--</strong></div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="{{ url_for('static', filename='js/player.js') }}?v=19"></script>
+    <script src="{{ url_for('static', filename='js/player.js') }}?v=25"></script>
 </body>
 </html>

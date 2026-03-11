@@ -3,6 +3,7 @@ let pathHistory = [];
 const ITEMS_PER_PAGE = 1000;
 let currentPage = 1;
 let currentFoldersList = [];
+let hasFilesHere = false;
 let analysisRunning = true;
 
 function encodePath(path) {
@@ -13,6 +14,7 @@ function encodePath(path) {
 document.addEventListener("DOMContentLoaded", () => {
     checkAnalysisStatus();
     setInterval(updateServerStatus, 1500);
+    setInterval(checkPing, 2000);
 });
 
 function formatTime(seconds) {
@@ -54,13 +56,38 @@ function checkAnalysisStatus() {
         });
 }
 
+function checkPing() {
+    const start = Date.now();
+    fetch('/api/ping')
+        .then(res => res.json())
+        .then(() => {
+            const ms = Date.now() - start;
+            const dot = document.getElementById('ping-dot');
+            const text = document.getElementById('ping-text');
+            if(dot && text) {
+                text.innerText = ms + " ms";
+                dot.className = 'status-dot';
+                if (ms < 50) dot.classList.add('success');
+                else if (ms < 200) dot.classList.add('yellow');
+                else dot.classList.add('red');
+            }
+        })
+        .catch(() => {
+            if(document.getElementById('ping-dot')) {
+                document.getElementById('ping-dot').className = 'status-dot red';
+                document.getElementById('ping-text').innerText = "Offline";
+            }
+        });
+}
+
 function fetchFolders(path) {
     let url = path ? `/api/folders/${encodePath(path)}` : `/api/folders`;
 
     fetch(url)
         .then(response => response.json())
-        .then(items => {
-            currentFoldersList = items;
+        .then(data => {
+            currentFoldersList = data.folders || [];
+            hasFilesHere = data.has_files || false;
             currentPage = 1;
             renderNavAndFolders(path);
         })
@@ -89,20 +116,42 @@ function renderCurrentPage() {
     const endIndex = startIndex + ITEMS_PER_PAGE;
     const pageItems = currentFoldersList.slice(startIndex, endIndex);
 
+    if (hasFilesHere && currentPage === 1) {
+        const col = document.createElement('div');
+        col.className = 'col-6 col-md-4 col-lg-3';
+        const pad = document.createElement('div');
+        pad.className = 'glass-panel glass-card playlist';
+        pad.style.borderColor = 'var(--accent-color)';
+        pad.innerHTML = `
+            <i class="bi bi-play-circle-fill" style="color:var(--accent-color); font-size: 3.5rem;"></i>
+            <span class="card-title text-uppercase" style="letter-spacing:1px; font-size:0.9rem;">Riproduci Cartella</span>
+            <span class="text-muted small mt-1">Brani misti</span>
+        `;
+        pad.onclick = () => startServerAutomix(currentPath);
+        col.appendChild(pad);
+        container.appendChild(col);
+    }
+
     pageItems.forEach(item => {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-4 col-lg-3';
-
         const pad = document.createElement('div');
-        pad.className = 'glass-panel glass-card ' + (item.has_subfolders ? 'folder' : 'playlist');
-
+        const typeClass = item.has_subfolders ? 'folder' : 'playlist';
+        pad.className = `glass-panel glass-card ${typeClass}`;
         const iconClass = item.has_subfolders ? 'bi-folder2-open' : 'bi-music-note-list';
-
-        pad.innerHTML = `
-            <i class="bi ${iconClass}"></i>
-            <span class="card-title">${item.name}</span>
-        `;
-
+        const icon = document.createElement('i');
+        icon.className = `bi ${iconClass}`;
+        const title = document.createElement('span');
+        title.className = 'card-title';
+        title.innerText = item.name;
+        pad.appendChild(icon);
+        pad.appendChild(title);
+        if (!item.has_subfolders && item.track_count !== undefined) {
+            const count = document.createElement('span');
+            count.className = 'text-muted small mt-1';
+            count.innerText = item.track_count + ' brani';
+            pad.appendChild(count);
+        }
         pad.onclick = () => {
             if (item.has_subfolders) {
                 pathHistory.push(currentPath);
@@ -111,11 +160,9 @@ function renderCurrentPage() {
                 startServerAutomix(item.path);
             }
         };
-
         col.appendChild(pad);
         container.appendChild(col);
     });
-
     renderPaginationControls();
 }
 
@@ -123,9 +170,7 @@ function renderPaginationControls() {
     const pagContainer = document.getElementById('pagination-container');
     if (!pagContainer) return;
     pagContainer.innerHTML = '';
-
     const totalPages = Math.ceil(currentFoldersList.length / ITEMS_PER_PAGE);
-
     if (totalPages > 1) {
         pagContainer.style.display = 'flex';
     } else {
@@ -150,7 +195,7 @@ function startServerAutomix(folderPath) {
     })
     .then(res => res.json())
     .then(data => {
-        if(data.status === "error") alert("Errore avvio playlist");
+        if(data.status === "error") alert("Errore: " + data.message);
     });
 }
 
@@ -222,10 +267,8 @@ function openQueue() {
     const offcanvasEl = document.getElementById('queueOffcanvas');
     const offcanvas = new bootstrap.Offcanvas(offcanvasEl);
     offcanvas.show();
-
     const listEl = document.getElementById('full-queue-list');
-    listEl.innerHTML = '<li class="queue-item-full text-center">Caricamento...</li>';
-
+    listEl.innerText = 'Caricamento...';
     fetch('/api/queue')
         .then(res => res.json())
         .then(data => {
@@ -235,8 +278,12 @@ function openQueue() {
                 data.queue.slice(0, limit).forEach(path => {
                     let li = document.createElement('li');
                     li.className = 'queue-item-full';
-                    let name = path.split('/').pop().replace('.mp3', '');
-                    li.innerHTML = `<i class="bi bi-music-note-beamed"></i> ${name}`;
+                    let icon = document.createElement('i');
+                    icon.className = 'bi bi-music-note-beamed';
+                    let nameSpan = document.createElement('span');
+                    nameSpan.innerText = path.split('/').pop().replace('.mp3', '');
+                    li.appendChild(icon);
+                    li.appendChild(nameSpan);
                     listEl.appendChild(li);
                 });
                 if(data.queue.length > limit) {
@@ -246,24 +293,34 @@ function openQueue() {
                     listEl.appendChild(li);
                 }
             } else {
-                listEl.innerHTML = '<li class="queue-item-full text-center text-muted">Coda vuota</li>';
+                listEl.innerText = 'Coda vuota';
             }
         })
         .catch(err => {
-            listEl.innerHTML = '<li class="queue-item-full text-center text-danger">Errore caricamento</li>';
+            listEl.innerText = 'Errore caricamento';
         });
 }
-
-// --- Funzioni Settings ---
 
 function openSettings() {
     const modalEl = document.getElementById('settingsModal');
     const modal = new bootstrap.Modal(modalEl);
     modal.show();
+    // Reset view
+    hideAnalysisOptions();
+}
+
+function showAnalysisOptions() {
+    document.getElementById('settings-grid').style.display = 'none';
+    document.getElementById('analysis-options').style.display = 'block';
+}
+
+function hideAnalysisOptions() {
+    document.getElementById('analysis-options').style.display = 'none';
+    document.getElementById('settings-grid').style.display = 'grid';
 }
 
 function triggerReanalyze() {
-    if(!confirm("Sei sicuro di voler cancellare il database e rianalizzare tutto?")) return;
+    if(!confirm("ATTENZIONE: Questo cancellerà l'intero database e rianalizzerà tutto da zero. Ci vorrà tempo. Continuare?")) return;
 
     fetch('/api/admin/reanalyze', { method: 'POST' })
         .then(res => res.json())
@@ -271,6 +328,28 @@ function triggerReanalyze() {
             bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
             analysisRunning = true;
             checkAnalysisStatus();
+        });
+}
+
+function triggerScanNew() {
+    fetch('/api/admin/scan_new', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
+            analysisRunning = true;
+            document.getElementById('loading-screen').style.display = 'flex';
+            document.getElementById('analysis-text').innerText = "Scansione nuovi file...";
+            checkAnalysisStatus();
+        });
+}
+
+function triggerRestart() {
+    if(!confirm("Riavviare il server RMusicPlayer? La musica si interromperà.")) return;
+    fetch('/api/admin/restart', { method: 'POST' })
+        .then(() => {
+            bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
+            alert("Server in riavvio. La pagina si ricaricherà tra 5 secondi.");
+            setTimeout(() => window.location.reload(), 5000);
         });
 }
 
