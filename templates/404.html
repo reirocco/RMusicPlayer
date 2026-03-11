@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 - Pagina non trovata</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f172a, #1e1b4b, #311bb6);
+            background-attachment: fixed;
+            color: #ffffff;
+            font-family: system-ui, -apple-system, sans-serif;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.07);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .error-code {
+            font-size: 6rem;
+            font-weight: 800;
+            color: #00d2ff;
+            text-shadow: 0 0 20px rgba(0, 210, 255, 0.5);
+            margin-bottom: 0;
+            line-height: 1;
+        }
+        .error-msg {
+            font-size: 1.5rem;
+            margin-bottom: 30px;
+            color: #b0b0b0;
+        }
+        .btn-home {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 12px 30px;
+            border-radius: 50px;
+            text-decoration: none;
+            transition: all 0.3s;
+            display: inline-block;
+        }
+        .btn-home:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="glass-panel">
+        <h1 class="error-code">404</h1>
+        <p class="error-msg">Ops! Sembra che tu ti sia perso nel mix.</p>
+        <a href="/" class="btn-home"><i class="bi bi-house-fill me-2"></i>Torna alla Home</a>
+    </div>
+</body>
+</html>

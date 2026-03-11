@@ -1,3 +1,22 @@
-# Project exclude paths
-/env/
-/static/config.js
+# File di stato e database
+music_db.json
+analysis_status.json
+
+# File temporanei di pre-loading
+temp_*.wav
+temp_*.tmp
+
+# File di sviluppo e cache
+prompt.txt
+__pycache__/
+*.pyc
+
+# Ambienti virtuali
+.venv/
+venv/
+ENV/
+env/
+
+# File IDE
+.idea/
+.vscode/
