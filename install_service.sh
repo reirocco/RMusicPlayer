@@ -1,22 +1,64 @@
 #!/bin/bash
 
-# Controllo che lo script sia eseguito con i permessi di amministratore
+# --- Configurazione ---
+SERVICE_NAME="rmusicplayer"
+SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
+
+# --- Controllo Root ---
 if [ "$EUID" -ne 0 ]; then
-  echo "Errore: Per favore, esegui questo script con sudo."
-  echo "Usa il comando: sudo bash install_service.sh"
-  exit
+  echo "❌ Errore: Esegui questo script con sudo."
+  exit 1
 fi
 
-# Trova l'utente reale (anche se si usa sudo) e la cartella corrente
+# --- Rilevamento Utente e Percorsi ---
 ACTUAL_USER=${SUDO_USER:-$(whoami)}
 WORK_DIR=$(pwd)
-SERVICE_PATH="/etc/systemd/system/rmusicplayer.service"
+VENV_DIR="$WORK_DIR/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
 
-echo "Inizio l'installazione del servizio RMusicPlayer..."
-echo "Utente rilevato: $ACTUAL_USER"
-echo "Cartella rilevata: $WORK_DIR"
+echo "🎵 RMusicPlayer Installer v3.0"
+echo "--------------------------------"
+echo "Utente: $ACTUAL_USER"
+echo "Cartella: $WORK_DIR"
 
-# Creazione del file di servizio
+# --- Installazione Dipendenze di Sistema (FFmpeg) ---
+echo "📦 Controllo dipendenze di sistema..."
+
+if command -v apt-get &> /dev/null; then
+    echo "   Rilevato sistema Debian/Ubuntu (apt)."
+    apt-get update -qq
+    apt-get install -y ffmpeg python3-venv python3-dev build-essential
+elif command -v pacman &> /dev/null; then
+    echo "   Rilevato sistema Arch Linux (pacman)."
+    pacman -Sy --noconfirm ffmpeg python
+elif command -v dnf &> /dev/null; then
+    echo "   Rilevato sistema Fedora/RHEL (dnf)."
+    dnf install -y ffmpeg python3-devel
+else
+    echo "⚠️  Gestore pacchetti non riconosciuto. Assicurati di aver installato FFmpeg manualmente."
+fi
+
+# --- Setup Ambiente Python (Venv) ---
+echo "🐍 Configurazione ambiente Python..."
+
+# Cambia proprietario della cartella all'utente reale per evitare problemi di permessi
+chown -R $ACTUAL_USER:$ACTUAL_USER $WORK_DIR
+
+# Eseguiamo il setup del venv come utente normale, non root
+sudo -u $ACTUAL_USER bash <<EOF
+if [ ! -d "$VENV_DIR" ]; then
+    echo "   Creazione virtualenv in $VENV_DIR..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+echo "   Installazione librerie Python..."
+"$VENV_DIR/bin/pip" install --upgrade pip
+"$VENV_DIR/bin/pip" install -r "$WORK_DIR/requirements.txt"
+EOF
+
+# --- Creazione Servizio Systemd ---
+echo "⚙️  Creazione servizio systemd..."
+
 cat <<EOF > $SERVICE_PATH
 [Unit]
 Description=RMusicPlayer Automix Server
@@ -24,29 +66,33 @@ After=network.target sound.target
 
 [Service]
 User=$ACTUAL_USER
+Group=$ACTUAL_USER
 WorkingDirectory=$WORK_DIR
-ExecStart=/usr/bin/python3 $WORK_DIR/app.py
+# Importante: Usa il Python del virtualenv
+ExecStart=$VENV_PYTHON $WORK_DIR/app.py
 Restart=always
 RestartSec=5
+# Variabili d'ambiente per Pygame headless
 Environment=PYTHONUNBUFFERED=1
+Environment=SDL_AUDIODRIVER=alsa
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-echo "File di servizio creato in $SERVICE_PATH"
+chmod 644 $SERVICE_PATH
 
-# Ricarica systemd, abilita e avvia il servizio
-echo "Ricarico i demoni di sistema..."
+# --- Attivazione ---
+echo "🚀 Avvio del servizio..."
 systemctl daemon-reload
+systemctl enable $SERVICE_NAME
+systemctl restart $SERVICE_NAME
 
-echo "Abilito l'avvio automatico al boot..."
-systemctl enable rmusicplayer.service
-
-echo "Avvio il servizio..."
-systemctl restart rmusicplayer.service
-
-echo "Installazione completata con successo!"
-echo "Ecco lo stato attuale del servizio:"
-echo "---------------------------------------------------"
-systemctl status rmusicplayer.service --no-pager
+# --- Verifica ---
+if systemctl is-active --quiet $SERVICE_NAME; then
+    echo "✅ Installazione completata! RMusicPlayer è attivo."
+    echo "   Web Interface: http://$(hostname -I | awk '{print $1}'):5000"
+else
+    echo "❌ Qualcosa è andato storto. Controlla i log con:"
+    echo "   sudo journalctl -u $SERVICE_NAME -f"
+fi
