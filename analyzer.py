@@ -10,7 +10,7 @@ from collections import deque
 
 DB_FILE = 'music_db.json'
 STATUS_FILE = 'analysis_status.json'
-TARGET_DBFS = -14.0 # Target Volume
+TARGET_DBFS = -14.0 
 
 CAMELOT_MAP = {
     'C': '8B', 'G': '9B', 'D': '10B', 'A': '11B', 'E': '12B', 'B': '1B', 
@@ -59,17 +59,18 @@ def _analyze_worker(file_path, return_dict):
         from pydub import AudioSegment
         warnings.filterwarnings('ignore')
         
-        # --- 0. GAIN (Pydub) ---
+        # --- 0. GAIN & DURATION (Pydub) ---
         try:
             audio = AudioSegment.from_file(file_path)
             current_db = audio.dBFS
             gain = TARGET_DBFS - current_db
+            duration_sec = len(audio) / 1000.0
         except Exception:
             gain = 0.0
+            duration_sec = 0.0
 
-        # --- 1. Librosa Load ---
+        # --- 1. Librosa Load (Primi 60s per BPM/Key/Energy) ---
         try:
-            total_duration = librosa.get_duration(path=file_path)
             y, sr = librosa.load(file_path, duration=60, sr=22050)
         except Exception as e:
             return_dict['success'] = False
@@ -80,7 +81,7 @@ def _analyze_worker(file_path, return_dict):
             return_dict['success'] = False
             return
 
-        # 2. CUE POINT
+        # 2. CUE POINT (Inizio)
         y_trimmed, index = librosa.effects.trim(y, top_db=25)
         cue_point = float(librosa.samples_to_time(index[0], sr=sr))
         
@@ -102,12 +103,29 @@ def _analyze_worker(file_path, return_dict):
         key = KEYS[key_idx]
         camelot = CAMELOT_MAP.get(key, "N/A")
 
+        # 5. ENERGY LEVEL (1-10)
+        # Calcoliamo RMS medio
+        rms = librosa.feature.rms(y=y_trimmed)
+        mean_rms = np.mean(rms)
+        # Normalizziamo (valori tipici rms tra 0.0 e 0.5)
+        # Scala empirica: 0.02 -> 1, 0.25 -> 10
+        energy = int(np.clip((mean_rms - 0.02) / (0.25 - 0.02) * 9 + 1, 1, 10))
+
+        # 6. FADE OUT POINT (Smart Mix Out)
+        # Analizziamo gli ultimi 15 secondi del file (se possibile)
+        # Non carichiamo tutto con librosa per non saturare RAM, usiamo stima.
+        # Per ora usiamo un valore standard di 4s, ma potremmo migliorarlo.
+        # Salviamo 'fade_duration' nel DB per uso futuro.
+        fade_duration = 4.0 
+
         return_dict['bpm'] = round(bpm, 1)
         return_dict['key'] = key
         return_dict['camelot'] = camelot
         return_dict['cue_point'] = round(cue_point, 3)
-        return_dict['duration'] = round(total_duration, 1)
+        return_dict['duration'] = round(duration_sec, 1)
         return_dict['gain'] = round(gain, 2)
+        return_dict['energy'] = energy
+        return_dict['fade_duration'] = fade_duration
         return_dict['success'] = True
         
     except Exception as e:
@@ -125,16 +143,16 @@ def safe_analyze_audio(file_path):
             p.terminate()
             p.join()
             time.sleep(0.1)
-            return None, None, None, None, None, None
+            return None
         
         if p.exitcode != 0:
             time.sleep(0.5)
-            return None, None, None, None, None, None
+            return None
             
         if return_dict.get('success'):
-            return return_dict['bpm'], return_dict['key'], return_dict.get('camelot'), return_dict.get('cue_point'), return_dict.get('duration'), return_dict.get('gain')
+            return dict(return_dict)
         else:
-            return None, None, None, None, None, None
+            return None
 
 def build_database():
     base_dir = get_music_dir()
@@ -159,6 +177,7 @@ def build_database():
                 all_files.append((full_path, rel_path))
 
     files_needing_analysis = []
+    total_files = len(all_files)
     
     for i, (full_path, rel_path) in enumerate(all_files):
         if i % 20 == 0: 
@@ -167,8 +186,8 @@ def build_database():
         file_hash = calculate_file_hash(full_path)
         if not file_hash: continue
 
-        # Rianalizza se manca il campo 'gain'
-        if file_hash in known_hashes and 'gain' in known_hashes[file_hash]:
+        # Rianalizza se manca il campo 'energy'
+        if file_hash in known_hashes and 'energy' in known_hashes[file_hash]:
             db[rel_path] = known_hashes[file_hash]
             db[rel_path]['hash'] = file_hash
         else:
@@ -188,16 +207,14 @@ def build_database():
             progress = 5 + int((i / total_analysis) * 95)
             update_status(progress, f"Analisi ({i+1}/{total_analysis}): {os.path.basename(full_path)}", eta_seconds=eta)
             
-            bpm, key, camelot, cue_point, duration, gain = safe_analyze_audio(full_path)
+            result = safe_analyze_audio(full_path)
             
             elapsed = time.time() - start_time
             time_window.append(elapsed)
             
-            if bpm is not None:
-                db[rel_path] = {
-                    'bpm': bpm, 'key': key, 'camelot': camelot, 
-                    'cue_point': cue_point, 'duration': duration, 'gain': gain, 'hash': file_hash
-                }
+            if result:
+                result['hash'] = file_hash
+                db[rel_path] = result
                 known_hashes[file_hash] = db[rel_path]
             else:
                 db[rel_path] = {'bpm': 0, 'key': 'Unknown', 'error': True, 'hash': file_hash}
