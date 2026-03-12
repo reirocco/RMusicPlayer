@@ -12,14 +12,14 @@ Utilizzando algoritmi di **Digital Signal Processing (DSP)**, il sistema analizz
 *   **True Crossfade:** Sovrappone fisicamente l'uscita della traccia vecchia con l'entrata della nuova per una transizione senza pause.
 *   **Analisi BPM & Camelot Key:** Mixaggio armonico automatico per evitare dissonanze.
 *   **Energy Flow:** L'algoritmo sceglie il prossimo brano mantenendo un livello di energia costante (±2) per garantire un flusso musicale coerente.
-*   **Smart Cue Points:** Rileva e taglia automaticamente i silenzi iniziali (Trim).
+*   **Smart Cue Points:** Rileva e taglia automaticamente i silenzi iniziali (Trim su Beat Detection).
 *   **Gain Normalization:** Livella automaticamente il volume di tutti i brani a -14 dBFS.
 *   **Pre-loading a Bassa Latenza:** Utilizza processi paralleli per preparare il mix successivo in background, garantendo zero lag al cambio traccia.
 
 ### 📂 Gestione Libreria & Coda
 *   **Scansione Ricorsiva:** Naviga liberamente tra cartelle e sottocartelle.
 *   **Play Here:** Funzione speciale per riprodurre file misti all'interno di cartelle che contengono anche sottocartelle.
-*   **Smart Queue:** Coda dinamica a consumo con visualizzazione laterale (Offcanvas).
+*   **Smart Queue:** Coda dinamica a consumo con visualizzazione laterale.
 *   **Auto-Refill:** Quando la coda finisce, il sistema ricarica e mescola automaticamente la playlist corrente.
 
 ### 💻 Interfaccia & Strumenti
@@ -85,17 +85,16 @@ Dopo aver aggiunto nuovi file MP3 alla cartella `RMusicPlayer`:
 
 ---
 
-## ⚠️ Disclaimer Legale e Limitazione di Responsabilità
+## ⚠️ Disclaimer Legale e Sicurezza
+
 **LEGGERE ATTENTAMENTE PRIMA DELL'USO**
 
-Questo software ("RMusicPlayer") è fornito **"AS IS"** (così com'è), senza garanzie di alcun tipo, esplicite o implicite.
+*   **Sicurezza:** Il codice include protezioni contro vulnerabilità comuni (Path Traversal, XSS), ma non è certificato per l'uso su server pubblici esposti a Internet. Si raccomanda l'uso solo in rete locale (LAN) protetta.
+*   **Copyright:** L'utente è l'unico responsabile per l'acquisizione legale dei file musicali.
+*   **Esecuzione Pubblica:** L'utilizzo in luoghi pubblici è soggetto alle leggi sul diritto d'autore locali (SIAE/SCF).
 
-* **Uso Personale:** Questo software è inteso esclusivamente per uso personale, privato e domestico.
-* **Copyright e Conformità:** L'utente è l'unico responsabile per l'acquisizione legale dei file musicali utilizzati con questo software.
-* **Esecuzione Pubblica:** L'utilizzo di questo software per la diffusione di musica in luoghi pubblici è soggetto alle leggi sul diritto d'autore del proprio Paese (es. licenza SIAE in Italia).
-* **Declinazione di Responsabilità:** Lo sviluppatore declina ogni responsabilità per eventuali danni diretti o indiretti o violazioni di legge derivanti dall'uso di questo software.
+**Utilizzando questo software, accetti integralmente queste condizioni e esoneri lo sviluppatore da qualsiasi responsabilità.**
 
-> **Utilizzando questo software, accetti integralmente queste condizioni.**
 ---
 
 ## 🛠 Tecnologie Usate

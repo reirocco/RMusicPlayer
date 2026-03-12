@@ -71,6 +71,7 @@ def _analyze_worker(file_path, return_dict):
 
         # --- 1. Librosa Load (Primi 60s per BPM/Key/Energy) ---
         try:
+            # Carichiamo l'audio. SR=22050 è standard per l'analisi veloce.
             y, sr = librosa.load(file_path, duration=60, sr=22050)
         except Exception as e:
             return_dict['success'] = False
@@ -81,42 +82,52 @@ def _analyze_worker(file_path, return_dict):
             return_dict['success'] = False
             return
 
-        # 2. CUE POINT (Inizio)
-        y_trimmed, index = librosa.effects.trim(y, top_db=25)
-        cue_point = float(librosa.samples_to_time(index[0], sr=sr))
+        # --- 2. SMART CUE POINT (Beat Detection) ---
+        # Cerchiamo il primo "onset" (attacco) significativo.
+        # backtrack=True aiuta a trovare l'inizio preciso del transiente.
+        onset_frames = librosa.onset.onset_detect(y=y, sr=sr, backtrack=True, units='frames')
         
-        # 3. BPM
-        onset_env = librosa.onset.onset_strength(y=y_trimmed, sr=sr)
+        if len(onset_frames) > 0:
+            # Prendiamo il primo onset rilevato
+            first_onset_frame = onset_frames[0]
+            cue_point = float(librosa.frames_to_time(first_onset_frame, sr=sr))
+            
+            # Se il cue point è troppo avanti (es. > 15s), forse è un errore o un'intro lunga.
+            # In tal caso, torniamo al vecchio metodo "Trim Silenzio" come fallback.
+            if cue_point > 15.0:
+                y_trimmed, index = librosa.effects.trim(y, top_db=30) # 30dB soglia più aggressiva
+                cue_point = float(librosa.samples_to_time(index[0], sr=sr))
+        else:
+            # Fallback se non trova beat
+            y_trimmed, index = librosa.effects.trim(y, top_db=25)
+            cue_point = float(librosa.samples_to_time(index[0], sr=sr))
+        
+        # Applichiamo un piccolissimo margine di sicurezza (-50ms) per non tagliare l'attacco
+        cue_point = max(0.0, cue_point - 0.05)
+
+        # --- 3. BPM ---
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         if not np.isfinite(onset_env).all(): onset_env = np.nan_to_num(onset_env)
 
         try:
-            tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+            # start_bpm=120 aiuta l'algoritmo a convergere su tempi dance
+            tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, start_bpm=120)
             bpm = float(tempo[0] if isinstance(tempo, np.ndarray) else tempo)
         except Exception:
             bpm = 120.0 
 
-        # 4. KEY
-        chroma = librosa.feature.chroma_stft(y=y_trimmed, sr=sr)
+        # --- 4. KEY ---
+        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
         if not np.isfinite(chroma).all(): chroma = np.nan_to_num(chroma)
              
         key_idx = np.argmax(np.sum(chroma, axis=1))
         key = KEYS[key_idx]
         camelot = CAMELOT_MAP.get(key, "N/A")
 
-        # 5. ENERGY LEVEL (1-10)
-        # Calcoliamo RMS medio
-        rms = librosa.feature.rms(y=y_trimmed)
+        # --- 5. ENERGY LEVEL ---
+        rms = librosa.feature.rms(y=y)
         mean_rms = np.mean(rms)
-        # Normalizziamo (valori tipici rms tra 0.0 e 0.5)
-        # Scala empirica: 0.02 -> 1, 0.25 -> 10
         energy = int(np.clip((mean_rms - 0.02) / (0.25 - 0.02) * 9 + 1, 1, 10))
-
-        # 6. FADE OUT POINT (Smart Mix Out)
-        # Analizziamo gli ultimi 15 secondi del file (se possibile)
-        # Non carichiamo tutto con librosa per non saturare RAM, usiamo stima.
-        # Per ora usiamo un valore standard di 4s, ma potremmo migliorarlo.
-        # Salviamo 'fade_duration' nel DB per uso futuro.
-        fade_duration = 4.0 
 
         return_dict['bpm'] = round(bpm, 1)
         return_dict['key'] = key
@@ -125,7 +136,6 @@ def _analyze_worker(file_path, return_dict):
         return_dict['duration'] = round(duration_sec, 1)
         return_dict['gain'] = round(gain, 2)
         return_dict['energy'] = energy
-        return_dict['fade_duration'] = fade_duration
         return_dict['success'] = True
         
     except Exception as e:
@@ -150,6 +160,7 @@ def safe_analyze_audio(file_path):
             return None
             
         if return_dict.get('success'):
+            # Converti in dict normale per evitare problemi con Manager
             return dict(return_dict)
         else:
             return None
@@ -177,7 +188,6 @@ def build_database():
                 all_files.append((full_path, rel_path))
 
     files_needing_analysis = []
-    total_files = len(all_files)
     
     for i, (full_path, rel_path) in enumerate(all_files):
         if i % 20 == 0: 
@@ -186,8 +196,9 @@ def build_database():
         file_hash = calculate_file_hash(full_path)
         if not file_hash: continue
 
-        # Rianalizza se manca il campo 'energy'
-        if file_hash in known_hashes and 'energy' in known_hashes[file_hash]:
+        if file_hash in known_hashes and 'cue_point' in known_hashes[file_hash]:
+            # Opzionale: Se vuoi forzare il ricalcolo del cue point anche sui vecchi file senza resettare tutto
+            # puoi commentare queste righe. Ma per ora manteniamo la logica incrementale.
             db[rel_path] = known_hashes[file_hash]
             db[rel_path]['hash'] = file_hash
         else:
@@ -214,6 +225,9 @@ def build_database():
             
             if result:
                 result['hash'] = file_hash
+                # Pulizia: rimuovi chiavi interne del worker se presenti
+                if 'success' in result: del result['success']
+
                 db[rel_path] = result
                 known_hashes[file_hash] = db[rel_path]
             else:

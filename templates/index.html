@@ -78,25 +78,28 @@
         .tech-info span { font-size: 0.65rem; color: var(--text-muted); display: block; text-transform: uppercase; }
         .tech-info strong { font-size: 1.1rem; color: var(--accent-color); font-family: 'Outfit', monospace; }
 
-        /* LOADING PANEL FLOATING (Nuovo Stile) */
+        /* LOADING PANEL BOTTOM RIGHT (Modificato) */
         #loading-panel {
             position: fixed;
-            bottom: 120px; /* Sopra il player */
-            left: 50%; transform: translateX(-50%);
-            width: 400px;
+            bottom: 110px; /* Sopra il player */
+            right: 30px;   /* A destra */
+            left: auto;    /* Reset left */
+            transform: none; /* Reset transform */
+            width: 320px;
             z-index: 9000;
-            background: rgba(10, 5, 20, 0.9);
+            background: rgba(10, 5, 20, 0.95);
             backdrop-filter: blur(15px);
-            border: 1px solid var(--accent-color);
-            border-radius: 15px;
-            padding: 15px 20px;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-left: 4px solid var(--accent-color); /* Accento laterale */
+            border-radius: 12px;
+            padding: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            display: none; /* Nascosto di default */
-            animation: slideUp 0.3s ease;
+            display: none;
+            animation: slideLeft 0.3s ease;
         }
-        @keyframes slideUp { from { opacity: 0; transform: translate(-50%, 20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        @keyframes slideLeft { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
 
-        /* FULL SCREEN LOADER (Solo per primo avvio) */
+        /* FULL SCREEN LOADER */
         #full-loading-screen { background: #0a0410; z-index: 10000; position: fixed; top:0; left:0; right:0; bottom:0; display:flex; flex-direction:column; justify-content:center; align-items:center; }
 
         .offcanvas.glass-offcanvas { background: rgba(10, 5, 20, 0.98); border-left: 1px solid rgba(255,255,255,0.1); color: #ffffff; }
@@ -127,24 +130,24 @@
 </head>
 <body>
 
-    <!-- Full Screen Loader (Solo Primo Avvio) -->
+    <!-- Loading Overlay (FULL SCREEN - Solo primo avvio) -->
     <div id="full-loading-screen" style="display: none;">
         <div class="spinner-grow text-primary" role="status" style="width: 4rem; height: 4rem; color: var(--accent-color)!important;"></div>
         <h3 class="mt-4 text-white">Caricamento Libreria...</h3>
     </div>
 
-    <!-- Floating Analysis Toast -->
+    <!-- Floating Analysis Toast (BOTTOM RIGHT - Per scansioni parziali) -->
     <div id="loading-panel">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <span class="text-white small fw-bold"><i class="bi bi-cpu me-2"></i>ANALISI IN CORSO</span>
+            <span class="text-white small fw-bold"><i class="bi bi-cpu me-2" style="color: var(--accent-color)"></i>ANALISI NUOVI FILE</span>
             <div class="spinner-border spinner-border-sm text-light" role="status"></div>
         </div>
         <div class="progress" style="height: 6px; background: rgba(255,255,255,0.1); border-radius: 10px;">
             <div id="analysis-progress-bar" class="progress-bar bg-info" style="width: 0%; transition: width 0.3s;"></div>
         </div>
         <div class="d-flex justify-content-between mt-2">
-            <span id="analysis-text" class="text-muted" style="font-size: 0.75rem;">...</span>
-            <span id="eta-text" style="font-size: 0.75rem; color: var(--accent-color);">--:--</span>
+            <span id="analysis-text" class="text-muted" style="font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;">...</span>
+            <span id="eta-text" style="font-size: 0.75rem; color: var(--secondary-color);">--:--</span>
         </div>
     </div>
 
@@ -207,7 +210,7 @@
         </div>
     </div>
 
-    <!-- Settings Modal Aggiornato -->
+    <!-- Settings Modal -->
     <div class="modal fade" id="settingsModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content glass-modal">
@@ -228,13 +231,11 @@
                             <div class="setting-label">Backup</div>
                             <div class="setting-desc">Scarica database JSON.</div>
                         </div>
-
                         <div class="setting-card console" onclick="openConsoleModal()">
                             <div class="setting-icon-wrapper"><i class="bi bi-terminal-fill"></i></div>
                             <div class="setting-label">Console Log</div>
                             <div class="setting-desc">Vedi log in tempo reale.</div>
                         </div>
-
                         <div class="setting-card warning" onclick="triggerRestart()">
                             <div class="setting-icon-wrapper"><i class="bi bi-power"></i></div>
                             <div class="setting-label">Riavvia Server</div>
@@ -313,6 +314,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="{{ url_for('static', filename='js/player.js') }}?v=27"></script>
+    <script src="{{ url_for('static', filename='js/player.js') }}?v=28"></script>
 </body>
 </html>

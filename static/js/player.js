@@ -17,7 +17,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setInterval(updateServerStatus, 1500);
     setInterval(checkPing, 2000);
 
-    // Ferma il polling dei log quando il modale si chiude
     const consoleModal = document.getElementById('consoleModal');
     consoleModal.addEventListener('hidden.bs.modal', () => {
         if (logInterval) clearInterval(logInterval);
@@ -32,33 +31,52 @@ function formatTime(seconds) {
 }
 
 function checkAnalysisStatus() {
-    if (!analysisRunning) return;
-
     fetch('/api/analysis_status')
         .then(res => res.json())
         .then(data => {
+            const fullLoader = document.getElementById('full-loading-screen');
+            const miniLoader = document.getElementById('loading-panel');
+
             if (data.is_running) {
+                analysisRunning = true;
+
+                // Aggiorna i testi e le barre PRIMA di mostrare, per evitare sfarfallii
                 let bar = document.getElementById('analysis-progress-bar');
                 let text = document.getElementById('analysis-text');
                 let etaText = document.getElementById('eta-text');
-
-                document.getElementById('loading-screen').style.display = 'flex';
 
                 if (bar) bar.style.width = data.progress + "%";
                 if (text) text.innerText = data.text;
                 if (etaText && data.eta_seconds !== undefined) {
                     etaText.innerText = "Tempo stimato: " + formatTime(data.eta_seconds);
                 }
+
+                // Logica di visualizzazione intelligente
+                // Se non c'è nulla caricato nel main content (primo avvio), usa Full Screen
+                if (currentFoldersList.length === 0 && document.getElementById('main-content').style.display === 'none') {
+                    fullLoader.style.display = 'flex';
+                    miniLoader.style.display = 'none';
+                } else {
+                    // Altrimenti (uso normale), usa il Mini Loader
+                    fullLoader.style.display = 'none';
+                    miniLoader.style.display = 'block';
+                }
+
+                // Continua il polling
                 setTimeout(checkAnalysisStatus, 1000);
             } else {
-                analysisRunning = false;
-                document.getElementById('loading-screen').style.display = 'none';
-                document.getElementById('main-content').style.display = 'block';
-                fetchFolders("");
+                if (analysisRunning) {
+                    // Se stava correndo e ora ha finito:
+                    analysisRunning = false;
+                    fullLoader.style.display = 'none';
+                    miniLoader.style.display = 'none';
+                    document.getElementById('main-content').style.display = 'block';
+                    fetchFolders(""); // Ricarica le cartelle aggiornate
+                }
             }
         })
         .catch(err => {
-            console.error("Errore stato analisi", err);
+            // In caso di errore di rete, riprova con calma
             setTimeout(checkAnalysisStatus, 2000);
         });
 }
@@ -97,6 +115,10 @@ function fetchFolders(path) {
             hasFilesHere = data.has_files || false;
             currentPage = 1;
             renderNavAndFolders(path);
+
+            // Se abbiamo caricato le cartelle, mostra il contenuto principale
+            document.getElementById('main-content').style.display = 'block';
+            document.getElementById('full-loading-screen').style.display = 'none';
         })
         .catch(err => console.error("Errore fetch folders", err));
 }
@@ -327,24 +349,33 @@ function hideAnalysisOptions() {
 
 function triggerReanalyze() {
     if(!confirm("ATTENZIONE: Questo cancellerà l'intero database e rianalizzerà tutto da zero. Ci vorrà tempo. Continuare?")) return;
+
+    // Mostra subito il loader FULL SCREEN per feedback immediato
+    document.getElementById('full-loading-screen').style.display = 'flex';
+    document.getElementById('main-content').style.display = 'none';
+
+    bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
+
     fetch('/api/admin/reanalyze', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
-            bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
             analysisRunning = true;
-            checkAnalysisStatus();
+            checkAnalysisStatus(); // Avvia il polling
         });
 }
 
 function triggerScanNew() {
+    // Mostra subito il MINI loader per feedback immediato
+    document.getElementById('loading-panel').style.display = 'block';
+    document.getElementById('analysis-text').innerText = "Avvio scansione...";
+
+    bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
+
     fetch('/api/admin/scan_new', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
-            bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
             analysisRunning = true;
-            document.getElementById('loading-screen').style.display = 'flex';
-            document.getElementById('analysis-text').innerText = "Scansione nuovi file...";
-            checkAnalysisStatus();
+            checkAnalysisStatus(); // Avvia il polling
         });
 }
 
@@ -366,13 +397,11 @@ function viewDbContent() {
     window.open('/api/admin/db_content', '_blank');
 }
 
-// --- CONSOLE LOGGING ---
 function openConsoleModal() {
     const modalEl = document.getElementById('consoleModal');
     const modal = new bootstrap.Modal(modalEl);
     modal.show();
 
-    // Chiudi Settings se aperto
     const settingsEl = document.getElementById('settingsModal');
     const settingsModal = bootstrap.Modal.getInstance(settingsEl);
     if(settingsModal) settingsModal.hide();
@@ -391,11 +420,9 @@ function fetchLogs() {
             data.logs.forEach(line => {
                 const div = document.createElement('div');
                 div.className = 'log-entry';
-                div.innerText = line; // Safe text
+                div.innerText = line;
                 container.appendChild(div);
             });
-
-            // Auto-scroll to bottom
             container.scrollTop = container.scrollHeight;
         });
 }
