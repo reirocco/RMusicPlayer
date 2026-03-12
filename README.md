@@ -1,4 +1,4 @@
-# 🎵 RMusicPlayer - Professional Automix System
+# 🎵 RMusicPlayer - Professional Automix System (V3.1)
 
 RMusicPlayer è un player musicale web-based avanzato, progettato per **automatizzare il mixaggio** tra brani musicali con la stessa fluidità di un DJ professionista.
 
@@ -9,20 +9,26 @@ Utilizzando algoritmi di **Digital Signal Processing (DSP)**, il sistema analizz
 ## ✨ Funzionalità Principali
 
 ### 🎧 Motore Automix Intelligente
+*   **True Crossfade:** Sovrappone fisicamente l'uscita della traccia vecchia con l'entrata della nuova (su due canali distinti) per una transizione senza pause.
 *   **Analisi BPM e Chiave Armonica (Camelot Wheel):** Il sistema sceglie automaticamente il prossimo brano compatibile musicalmente con quello attuale.
 *   **Cue Point Automatico:** Rileva e taglia automaticamente i silenzi iniziali, facendo partire ogni brano esattamente sul primo colpo di cassa.
-*   **Normalizzazione Volume (Gain):** Calcola il volume medio di ogni traccia e applica un guadagno dinamico per livellare tutte le canzoni allo stesso standard (-14 dBFS).
-*   **True Crossfade:** Sovrappone fisicamente l'uscita della traccia vecchia con l'entrata della nuova per una transizione senza pause.
-
-### 📂 Gestione Libreria
-*   **Scansione Ricorsiva:** Legge file MP3 da tutte le sottocartelle.
-*   **Coda a Consumo:** Garantisce che tutte le canzoni di una cartella vengano suonate prima di ripetere, evitando loop indesiderati.
+*   **Normalizzazione Volume (Gain):** Calcola il volume medio di ogni traccia e applica un guadagno dinamico in tempo reale per livellare tutte le canzoni allo stesso standard (-14 dBFS).
 *   **Pre-loading in Background:** Utilizza processi paralleli a bassa priorità per preparare il mix successivo, garantendo zero lag nell'interfaccia.
 
-### 💻 Interfaccia Moderna
-*   **Glassmorphism UI:** Design elegante e reattivo.
-*   **Pannello di Controllo:** Gestione completa di playback, coda e impostazioni.
-*   **System Tools:** Backup del database, rianalisi forzata e monitoraggio stato.
+### 📂 Gestione Libreria & Coda
+*   **Scansione Ricorsiva:** Naviga liberamente tra cartelle e sottocartelle.
+*   **Smart Queue:** Coda dinamica a consumo. Una volta suonata, una canzone viene rimossa dalla lista per evitare ripetizioni fino al completamento della cartella.
+*   **Play Here:** Funzione speciale per riprodurre file misti all'interno di cartelle che contengono anche sottocartelle.
+*   **Pannello Coda:** Sidebar laterale per visualizzare le prossime tracce nel pool di mixaggio.
+
+### 💻 Interfaccia & Strumenti
+*   **Ultra-Modern Neon UI:** Design Glassmorphism 2.0 con palette scura e animazioni fluide.
+*   **Pannello Impostazioni (⚙️):**
+    *   **Rianalisi Incrementale:** Scansiona solo i nuovi file aggiunti (veloce).
+    *   **Reset DB:** Rianalisi completa da zero.
+    *   **Backup:** Scarica una copia di sicurezza del database.
+    *   **Riavvio Server:** Riavvia l'applicazione direttamente dall'interfaccia.
+    *   **Status Monitor:** Indicatore Ping e latenza server in tempo reale.
 
 ---
 
@@ -30,12 +36,9 @@ Utilizzando algoritmi di **Digital Signal Processing (DSP)**, il sistema analizz
 
 ### Requisiti
 *   **Python 3.8+**
-*   **FFmpeg** (necessario per l'elaborazione audio di pydub)
-    *   *Linux (Debian/Ubuntu):* `sudo apt install ffmpeg`
-    *   *macOS:* `brew install ffmpeg`
-    *   *Windows:* Scaricare i binari e aggiungerli al PATH.
+*   **FFmpeg** (Fondamentale per l'elaborazione audio di pydub)
 
-### Setup Rapido
+### 🐧 Installazione su Linux (Debian, Ubuntu, Arch, Fedora)
 
 1.  **Clona il repository:**
     ```bash
@@ -43,41 +46,40 @@ Utilizzando algoritmi di **Digital Signal Processing (DSP)**, il sistema analizz
     cd RMusicPlayer
     ```
 
-2.  **Crea un ambiente virtuale (consigliato):**
+2.  **Esegui l'installer universale:**
     ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate  # Su Windows: .venv\Scripts\activate
+    sudo bash install_service.sh
     ```
+    *Questo script installerà automaticamente FFmpeg, Python venv, le dipendenze e creerà un servizio systemd per l'avvio automatico.*
 
-3.  **Installa le dipendenze:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+3.  **Accedi al player:**
+    Apri il browser e vai su `http://localhost:5000` (o l'IP del server).
 
-4.  **Prepara la tua musica:**
-    *   Crea una cartella `RMusicPlayer` nella tua home directory utente:
-        *   *Linux/Mac:* `~/RMusicPlayer`
-        *   *Windows:* `C:\Users\TuoNome\RMusicPlayer`
-    *   Inserisci lì le tue cartelle con i file MP3.
+### 🪟 Installazione su Windows
 
-5.  **Avvia il server:**
-    ```bash
-    python app.py
-    ```
+1.  **Scarica e Installa FFmpeg:**
+    *   Scarica da [ffmpeg.org](https://ffmpeg.org/download.html).
+    *   Estrai `ffmpeg.exe` e copialo dentro la cartella di RMusicPlayer (oppure aggiungilo al PATH di sistema).
 
-6.  **Apri il browser:**
-    Vai su `http://localhost:5000`
+2.  **Esegui l'installer:**
+    *   Fai doppio click su `install_windows.bat`.
+    *   Segui le istruzioni a schermo. Ti chiederà se vuoi avviare il programma automaticamente all'accensione.
+
+3.  **Avvio:**
+    *   Usa il file `run.bat` creato sul desktop o nella cartella per lanciare il player.
 
 ---
 
-## ⚙️ Primo Utilizzo
+## ⚙️ Primo Utilizzo e Manutenzione
 
 Al primo avvio, il sistema inizierà automaticamente ad analizzare la tua libreria.
-*   L'analisi calcola BPM, Chiave, Volume e Cue Point per ogni file.
-*   Puoi monitorare il progresso dalla barra di caricamento.
-*   **Nota:** La prima analisi può richiedere tempo se hai migliaia di brani. Le esecuzioni successive saranno istantanee grazie al caching (hash).
+*   **Nota:** La prima analisi può richiedere tempo se hai migliaia di brani. Le esecuzioni successive saranno istantanee grazie al caching.
 
-Se aggiungi nuovi file o vuoi ricalcolare i volumi, vai su **Impostazioni (⚙️) -> Rianalisi Completa**.
+### Aggiunta Nuova Musica
+Dopo aver aggiunto nuovi file MP3 alla cartella `RMusicPlayer`:
+1.  Clicca sull'icona **Ingranaggio (⚙️)**.
+2.  Seleziona **Analisi Database -> Analizza Nuovi**.
+3.  Il sistema scansionerà solo i file aggiunti in pochi secondi.
 
 ---
 
@@ -89,7 +91,7 @@ Questo software ("RMusicPlayer") è fornito **"AS IS"** (così com'è), senza ga
 * **Uso Personale:** Questo software è inteso esclusivamente per uso personale, privato e domestico.
 * **Copyright e Conformità:** L'utente è l'unico responsabile per l'acquisizione legale dei file musicali utilizzati con questo software. Lo sviluppatore non promuove, facilita né incoraggia in alcun modo la pirateria musicale o la violazione della proprietà intellettuale.
 * **Esecuzione Pubblica:** L'utilizzo di questo software per la diffusione di musica in luoghi pubblici, eventi commerciali o locali (es. bar, discoteche, negozi, ecc.) è rigorosamente soggetto alle leggi sul diritto d'autore del proprio Paese (es. licenza SIAE e/o SCF in Italia). L'utente è l'unico responsabile dell'ottenimento e del pagamento delle necessarie licenze.
-* **Sviluppo assistito da IA:** Questo progetto è stato sviluppato con il supporto di strumenti di Intelligenza Artificiale. Sebbene il codice sia stato revisionato e testato dallo sviluppatore, l'utente finale resta responsabile per la verifica della sua idoneità e sicurezza prima dell'utilizzo.
+* **Sicurezza:** Il codice include protezioni contro vulnerabilità comuni (Path Traversal, XSS), ma non è certificato per l'uso su server pubblici esposti a Internet. Si raccomanda l'uso solo in rete locale (LAN).
 * **Declinazione di Responsabilità:** Lo sviluppatore declina ogni responsabilità per eventuali danni diretti o indiretti, perdite di dati, violazioni di copyright o sanzioni legali derivanti dall'uso proprio o improprio di questo software.
 
 > **Utilizzando questo software, accetti integralmente queste condizioni e accetti di esonerare lo sviluppatore da qualsiasi responsabilità legale.**

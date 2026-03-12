@@ -5,6 +5,7 @@ let currentPage = 1;
 let currentFoldersList = [];
 let hasFilesHere = false;
 let analysisRunning = true;
+let logInterval = null;
 
 function encodePath(path) {
     if (!path) return "";
@@ -15,6 +16,12 @@ document.addEventListener("DOMContentLoaded", () => {
     checkAnalysisStatus();
     setInterval(updateServerStatus, 1500);
     setInterval(checkPing, 2000);
+
+    // Ferma il polling dei log quando il modale si chiude
+    const consoleModal = document.getElementById('consoleModal');
+    consoleModal.addEventListener('hidden.bs.modal', () => {
+        if (logInterval) clearInterval(logInterval);
+    });
 });
 
 function formatTime(seconds) {
@@ -305,7 +312,6 @@ function openSettings() {
     const modalEl = document.getElementById('settingsModal');
     const modal = new bootstrap.Modal(modalEl);
     modal.show();
-    // Reset view
     hideAnalysisOptions();
 }
 
@@ -321,7 +327,6 @@ function hideAnalysisOptions() {
 
 function triggerReanalyze() {
     if(!confirm("ATTENZIONE: Questo cancellerà l'intero database e rianalizzerà tutto da zero. Ci vorrà tempo. Continuare?")) return;
-
     fetch('/api/admin/reanalyze', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
@@ -359,4 +364,38 @@ function downloadBackup() {
 
 function viewDbContent() {
     window.open('/api/admin/db_content', '_blank');
+}
+
+// --- CONSOLE LOGGING ---
+function openConsoleModal() {
+    const modalEl = document.getElementById('consoleModal');
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    // Chiudi Settings se aperto
+    const settingsEl = document.getElementById('settingsModal');
+    const settingsModal = bootstrap.Modal.getInstance(settingsEl);
+    if(settingsModal) settingsModal.hide();
+
+    fetchLogs();
+    logInterval = setInterval(fetchLogs, 1000);
+}
+
+function fetchLogs() {
+    fetch('/api/admin/logs')
+        .then(res => res.json())
+        .then(data => {
+            const container = document.getElementById('log-container');
+            container.innerHTML = '';
+
+            data.logs.forEach(line => {
+                const div = document.createElement('div');
+                div.className = 'log-entry';
+                div.innerText = line; // Safe text
+                container.appendChild(div);
+            });
+
+            // Auto-scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        });
 }
