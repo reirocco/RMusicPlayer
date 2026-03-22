@@ -1,22 +1,72 @@
-# File di stato e database
+# --- Database e Stato ---
 music_db.json
 analysis_status.json
+music_db_backup_*.json
 
-# File temporanei di pre-loading
+# --- File Temporanei ---
 temp_*.wav
 temp_*.tmp
+*.log
+*.bak
+CreateShortcut.vbs
 
-# File di sviluppo e cache
-prompt.txt
-__pycache__/
-*.pyc
-
-# Ambienti virtuali
+# --- Dipendenze e Binari ---
+ffmpeg.exe
+ffmpeg/
+RubberBand.exe
 .venv/
 venv/
 ENV/
 env/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# File IDE
+# --- Cache e Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# --- IDE e Editor ---
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+.directory
+
+# --- Sistema Operativo ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Frontend Build Assets (facoltativo, ma consigliato se non necessari) ---
+static/css/*.map
+static/js/*.map
+
+# --- Altri ---
+prompt.txt
