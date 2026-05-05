@@ -133,14 +133,29 @@
     <!-- Loading Overlay (FULL SCREEN - Solo primo avvio) -->
     <div id="full-loading-screen" style="display: none;">
         <div class="spinner-grow text-primary" role="status" style="width: 4rem; height: 4rem; color: var(--accent-color)!important;"></div>
-        <h3 class="mt-4 text-white">Caricamento Libreria...</h3>
+        <h3 class="mt-4 text-white" id="full-loading-text">Caricamento Libreria...</h3>
+        
+        <div class="w-50 mt-4" style="max-width: 600px;">
+            <div class="progress" style="height: 10px; background: rgba(255,255,255,0.1); border-radius: 10px;">
+                <div id="full-analysis-progress-bar" class="progress-bar bg-info" style="width: 0%; transition: width 0.3s;"></div>
+            </div>
+            <div class="d-flex justify-content-between mt-2">
+                <span id="full-analysis-subtext" class="text-muted small" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%;">...</span>
+                <span id="full-eta-text" class="text-secondary small">--:--</span>
+            </div>
+        </div>
+
+        <button class="btn btn-outline-danger mt-4" onclick="stopAnalysis()"><i class="bi bi-stop-circle me-2"></i>Interrompi Analisi</button>
     </div>
 
     <!-- Floating Analysis Toast (BOTTOM RIGHT - Per scansioni parziali) -->
     <div id="loading-panel">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <span class="text-white small fw-bold"><i class="bi bi-cpu me-2" style="color: var(--accent-color)"></i>ANALISI NUOVI FILE</span>
-            <div class="spinner-border spinner-border-sm text-light" role="status"></div>
+            <div>
+                <div class="spinner-border spinner-border-sm text-light me-2" role="status" style="vertical-align: middle;"></div>
+                <button class="btn btn-sm btn-outline-danger" onclick="stopAnalysis()" style="padding: 0px 5px;" title="Interrompi"><i class="bi bi-x-lg"></i></button>
+            </div>
         </div>
         <div class="progress" style="height: 6px; background: rgba(255,255,255,0.1); border-radius: 10px;">
             <div id="analysis-progress-bar" class="progress-bar bg-info" style="width: 0%; transition: width 0.3s;"></div>

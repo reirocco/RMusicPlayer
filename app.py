@@ -62,8 +62,8 @@ CHANNEL_END_EVENTS = {
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
-DB_FILE = os.path.join(BASE_DIR, 'music_db.json')
-STATUS_FILE = os.path.join(BASE_DIR, 'analysis_status.json')
+DB_FILE = os.path.join(MUSIC_ROOT_DIR, 'music_db.json')
+STATUS_FILE = os.path.join(MUSIC_ROOT_DIR, 'analysis_status.json')
 ANALYZER_SCRIPT = os.path.join(BASE_DIR, 'analyzer.py')
 
 if not os.path.exists(MUSIC_ROOT_DIR):
@@ -118,6 +118,10 @@ def load_db():
 load_db()
 
 def start_analyzer_process():
+    flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
+    if os.path.exists(flag_file):
+        try: os.remove(flag_file)
+        except: pass
     if os.path.exists(ANALYZER_SCRIPT):
         subprocess.Popen([sys.executable, ANALYZER_SCRIPT])
 
@@ -446,6 +450,16 @@ def admin_scan_new():
     try:
         start_analyzer_process()
         return jsonify({"status": "ok", "message": "Scansione nuovi file avviata."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/admin/stop_analysis', methods=['POST'])
+def admin_stop_analysis():
+    flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
+    try:
+        with open(flag_file, 'w') as f:
+            f.write('stop')
+        return jsonify({"status": "ok", "message": "Richiesta di interruzione inviata. L'analisi si fermerà al termine del brano corrente."})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

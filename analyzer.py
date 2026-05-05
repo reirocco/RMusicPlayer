@@ -8,8 +8,10 @@ import sys
 import hashlib
 from collections import deque
 
-DB_FILE = 'music_db.json'
-STATUS_FILE = 'analysis_status.json'
+MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+DB_FILE = os.path.join(MUSIC_ROOT_DIR, 'music_db.json')
+STATUS_FILE = os.path.join(MUSIC_ROOT_DIR, 'analysis_status.json')
+FLAG_FILE = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
 TARGET_DBFS = -14.0 
 
 CAMELOT_MAP = {
@@ -24,7 +26,7 @@ CAMELOT_MAP = {
 KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 def get_music_dir():
-    return os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
+    return MUSIC_ROOT_DIR
 
 def calculate_file_hash(file_path):
     try:
@@ -166,7 +168,10 @@ def safe_analyze_audio(file_path):
             return None
 
 def build_database():
-    base_dir = get_music_dir()
+    base_dir = MUSIC_ROOT_DIR
+    if os.path.exists(FLAG_FILE):
+        try: os.remove(FLAG_FILE)
+        except: pass
     db = {}
     update_status(0, "Avvio scansione hash...", eta_seconds=None)
 
@@ -211,6 +216,14 @@ def build_database():
         time_window = deque(maxlen=5)
         
         for i, (full_path, rel_path, file_hash) in enumerate(files_needing_analysis):
+            if os.path.exists(FLAG_FILE):
+                print("Richiesta di interruzione ricevuta!", flush=True)
+                try: os.remove(FLAG_FILE)
+                except: pass
+                with open(DB_FILE, 'w') as f: json.dump(db, f, indent=4)
+                update_status(progress if 'progress' in locals() else 0, "Analisi interrotta dall'utente.", is_running=False)
+                return
+
             start_time = time.time()
             
             avg_time = sum(time_window) / len(time_window) if time_window else 5.0

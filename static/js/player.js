@@ -51,6 +51,21 @@ function checkAnalysisStatus() {
                     etaText.innerText = "Tempo stimato: " + formatTime(data.eta_seconds);
                 }
 
+                // Aggiorna la progress bar della schermata Full Screen
+                let fullBar = document.getElementById('full-analysis-progress-bar');
+                let fullSubtext = document.getElementById('full-analysis-subtext');
+                let fullEtaText = document.getElementById('full-eta-text');
+                let fullMainText = document.getElementById('full-loading-text');
+
+                if (fullBar) fullBar.style.width = data.progress + "%";
+                if (fullSubtext) fullSubtext.innerText = data.text;
+                if (fullEtaText && data.eta_seconds !== undefined) {
+                    fullEtaText.innerText = "Tempo stimato: " + formatTime(data.eta_seconds);
+                }
+                if (fullMainText) {
+                    fullMainText.innerText = "Analisi in corso: " + data.progress + "%";
+                }
+
                 // Logica di visualizzazione intelligente
                 // Se non c'è nulla caricato nel main content (primo avvio), usa Full Screen
                 if (currentFoldersList.length === 0 && document.getElementById('main-content').style.display === 'none') {
@@ -376,6 +391,19 @@ function triggerScanNew() {
         .then(data => {
             analysisRunning = true;
             checkAnalysisStatus(); // Avvia il polling
+        });
+}
+
+function stopAnalysis() {
+    if(!confirm("Sei sicuro di voler interrompere l'analisi in corso?")) return;
+    
+    fetch('/api/admin/stop_analysis', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message || "Richiesta di interruzione inviata.");
+        })
+        .catch(err => {
+            alert("Errore durante l'interruzione.");
         });
 }
 
