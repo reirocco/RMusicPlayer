@@ -28,17 +28,61 @@ KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 def get_music_dir():
     return MUSIC_ROOT_DIR
 
-def calculate_file_hash(file_path):
+from mutagen.id3 import ID3, TBPM, TKEY, TXXX
+from mutagen.mp3 import MP3
+
+def read_id3_tags(file_path):
     try:
-        file_size = os.path.getsize(file_path)
-        sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            chunk = f.read(1024 * 1024) 
-            sha256_hash.update(chunk)
-        sha256_hash.update(str(file_size).encode('utf-8'))
-        return sha256_hash.hexdigest()
+        audio = ID3(file_path)
+        data = {}
+        
+        bpm_frames = audio.getall('TBPM')
+        if bpm_frames: data['bpm'] = float(bpm_frames[0].text[0])
+        
+        key_frames = audio.getall('TKEY')
+        if key_frames: data['key'] = key_frames[0].text[0]
+        
+        camelot = audio.getall('TXXX:RMusic_Camelot')
+        if camelot: data['camelot'] = camelot[0].text[0]
+        
+        energy = audio.getall('TXXX:RMusic_Energy')
+        if energy: data['energy'] = int(float(energy[0].text[0]))
+        
+        cue_point = audio.getall('TXXX:RMusic_CuePoint')
+        if cue_point: data['cue_point'] = float(cue_point[0].text[0])
+        
+        gain = audio.getall('TXXX:RMusic_Gain')
+        if gain: data['gain'] = float(gain[0].text[0])
+        
+        # Verifica se ci sono i campi essenziali
+        if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point']):
+            try:
+                mp3 = MP3(file_path)
+                data['duration'] = round(mp3.info.length, 1)
+            except:
+                data['duration'] = 0.0
+            return data
+        return None
     except Exception:
         return None
+
+def write_id3_tags(file_path, data):
+    try:
+        try:
+            audio = ID3(file_path)
+        except Exception:
+            audio = ID3()
+            
+        audio.add(TBPM(encoding=3, text=str(data.get('bpm', ''))))
+        audio.add(TKEY(encoding=3, text=str(data.get('key', ''))))
+        audio.add(TXXX(encoding=3, desc='RMusic_Camelot', text=str(data.get('camelot', ''))))
+        audio.add(TXXX(encoding=3, desc='RMusic_Energy', text=str(data.get('energy', ''))))
+        audio.add(TXXX(encoding=3, desc='RMusic_CuePoint', text=str(data.get('cue_point', ''))))
+        audio.add(TXXX(encoding=3, desc='RMusic_Gain', text=str(data.get('gain', '0.0'))))
+        
+        audio.save(file_path, v2_version=3)
+    except Exception as e:
+        print(f"Errore salvataggio ID3 su {file_path}: {e}")
 
 def update_status(progress, text, eta_seconds=None, is_running=True):
     status = {
@@ -173,20 +217,18 @@ def build_database():
         try: os.remove(FLAG_FILE)
         except: pass
     db = {}
-    update_status(0, "Avvio scansione hash...", eta_seconds=None)
+    update_status(0, "Lettura metadati ID3...", eta_seconds=None)
 
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r') as f: db = json.load(f)
         except json.JSONDecodeError: db = {}
 
-    known_hashes = {}
-    for path, data in db.items():
-        if 'hash' in data: known_hashes[data['hash']] = data
-
+    # Non usiamo più known_hashes perché ci fidiamo dei file MP3
+    # Manteniamo la cache in RAM (db) e controlliamo fisicamente l'ID3 per i file.
+    
     all_files = []
     for root, dirs, files in os.walk(base_dir):
-        # Ignora le cartelle nascoste
         dirs[:] = [d for d in dirs if not d.startswith('.')]
         for file in files:
             if file.endswith('.mp3') and not file.startswith('.'):
@@ -198,18 +240,14 @@ def build_database():
     
     for i, (full_path, rel_path) in enumerate(all_files):
         if i % 20 == 0: 
-            update_status(int((i / len(all_files)) * 5), f"Verifica Hash: {os.path.basename(full_path)}")
+            update_status(int((i / len(all_files)) * 5), f"Lettura Tag: {os.path.basename(full_path)}")
             
-        file_hash = calculate_file_hash(full_path)
-        if not file_hash: continue
-
-        if file_hash in known_hashes and 'cue_point' in known_hashes[file_hash]:
-            # Opzionale: Se vuoi forzare il ricalcolo del cue point anche sui vecchi file senza resettare tutto
-            # puoi commentare queste righe. Ma per ora manteniamo la logica incrementale.
-            db[rel_path] = known_hashes[file_hash]
-            db[rel_path]['hash'] = file_hash
+        id3_data = read_id3_tags(full_path)
+        if id3_data:
+            # I tag esistono, usa questi e aggiorna la cache JSON
+            db[rel_path] = id3_data
         else:
-            files_needing_analysis.append((full_path, rel_path, file_hash))
+            files_needing_analysis.append((full_path, rel_path))
 
     total_analysis = len(files_needing_analysis)
     
@@ -217,7 +255,7 @@ def build_database():
         print(f"Trovati {total_analysis} file da analizzare.")
         time_window = deque(maxlen=5)
         
-        for i, (full_path, rel_path, file_hash) in enumerate(files_needing_analysis):
+        for i, (full_path, rel_path) in enumerate(files_needing_analysis):
             if os.path.exists(FLAG_FILE):
                 print("Richiesta di interruzione ricevuta!", flush=True)
                 try: os.remove(FLAG_FILE)
@@ -239,14 +277,15 @@ def build_database():
             time_window.append(elapsed)
             
             if result:
-                result['hash'] = file_hash
                 # Pulizia: rimuovi chiavi interne del worker se presenti
                 if 'success' in result: del result['success']
 
+                # Salva i metadati nel file MP3
+                write_id3_tags(full_path, result)
+                
                 db[rel_path] = result
-                known_hashes[file_hash] = db[rel_path]
             else:
-                db[rel_path] = {'bpm': 0, 'key': 'Unknown', 'error': True, 'hash': file_hash}
+                db[rel_path] = {'bpm': 0, 'key': 'Unknown', 'error': True}
 
             if (i + 1) % 5 == 0:
                 with open(DB_FILE, 'w') as f: json.dump(db, f, indent=4)

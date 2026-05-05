@@ -3,4 +3,4 @@ pygame-ce
 librosa==0.11.0
 numpy
 pydub
-soundfile
+soundfilemutagen
