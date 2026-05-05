@@ -316,9 +316,10 @@ def play_folder():
              return jsonify({"status": "error", "message": "Cartella non trovata"}), 404
 
         new_playlist = []
-        for root, _, files in os.walk(target_dir):
+        for root, dirs, files in os.walk(target_dir):
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
             for file in files:
-                if file.endswith('.mp3'):
+                if file.endswith('.mp3') and not file.startswith('.'):
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, MUSIC_ROOT_DIR).replace('\\', '/')
                     new_playlist.append(rel_path)
@@ -384,20 +385,21 @@ def api_folders(subpath):
     if os.path.exists(target_dir):
         try:
             for f in os.listdir(target_dir):
-                if f.endswith('.mp3'):
+                if f.endswith('.mp3') and not f.startswith('.'):
                     has_files_here = True
                     break
             
             for d in os.listdir(target_dir):
+                if d.startswith('.'): continue
                 p = os.path.join(target_dir, d)
                 if os.path.isdir(p):
                     if not p.startswith(MUSIC_ROOT_DIR): continue
-                    has_sub = any(os.path.isdir(os.path.join(p, s)) for s in os.listdir(p))
+                    has_sub = any(os.path.isdir(os.path.join(p, s)) and not s.startswith('.') for s in os.listdir(p))
                     items.append({
                         'name': d, 
                         'path': os.path.relpath(p, MUSIC_ROOT_DIR).replace('\\', '/'), 
                         'has_subfolders': has_sub,
-                        'track_count': len([f for f in os.listdir(p) if f.endswith('.mp3')])
+                        'track_count': len([f for f in os.listdir(p) if f.endswith('.mp3') and not f.startswith('.')])
                     })
         except OSError: pass
         
