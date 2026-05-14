@@ -25,6 +25,7 @@
             --glass-bg: rgba(255, 255, 255, 0.03);
             --glass-border: rgba(255, 255, 255, 0.08);
             --glass-highlight: rgba(255, 255, 255, 0.1);
+            --bs-secondary-color: #ffffff;
         }
 
         body {
@@ -636,7 +637,7 @@
 
     <div class="offcanvas offcanvas-end glass-offcanvas" tabindex="-1" id="queueOffcanvas">
         <div class="offcanvas-header border-bottom border-secondary border-opacity-10">
-            <h5 class="offcanvas-title fw-bold"><span style="color:var(--accent-color)">///</span> CODA AUTOMIX</h5>
+            <h5 class="offcanvas-title fw-bold"><span style="color:var(--accent-color)">///</span> CODA DI RIPRODUZIONE</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
         </div>
         <div class="offcanvas-body p-0">
@@ -720,9 +721,16 @@
 
     <div class="player-bar-wrapper">
         <div class="player-glass-deck">
-            <div class="track-info-group">
+            <div class="track-info-group" style="flex: 1; margin-right: 20px;">
                 <p class="track-name" id="deck-track">RMusicPlayer</p>
                 <p class="track-status" id="deck-status">Ready to mix</p>
+                <div class="progress mt-2" style="height: 4px; width: 100%; min-width: 150px; background: rgba(255,255,255,0.1); border-radius: 4px;">
+                    <div id="deck-progress" class="progress-bar" style="width: 0%; background: var(--accent-color); transition: width 1.5s linear;"></div>
+                </div>
+                <div class="d-flex justify-content-between mt-1" style="font-size: 0.65rem; color: var(--text-muted); font-family: 'Fira Code', monospace;">
+                    <span id="deck-time-pos">0:00</span>
+                    <span id="deck-time-left">-0:00</span>
+                </div>
             </div>
 
             <div class="d-flex align-items-center">

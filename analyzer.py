@@ -7,6 +7,7 @@ import time
 import sys
 import hashlib
 from collections import deque
+import datetime
 
 MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
 DB_FILE = os.path.join(MUSIC_ROOT_DIR, 'music_db.json')
@@ -25,11 +26,26 @@ CAMELOT_MAP = {
 
 KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-def get_music_dir():
-    return MUSIC_ROOT_DIR
-
 from mutagen.id3 import ID3, TBPM, TKEY, TXXX
 from mutagen.mp3 import MP3
+
+def calculate_audio_hash(file_path):
+    try:
+        audio = MP3(file_path)
+        offset = audio.info.frame_offset
+        
+        hasher = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            f.seek(offset)
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception as e:
+        print(f"[Worker] Errore calcolo hash per {file_path}: {e}")
+        return None
 
 def read_id3_tags(file_path):
     try:
@@ -54,8 +70,23 @@ def read_id3_tags(file_path):
         gain = audio.getall('TXXX:RMusic_Gain')
         if gain: data['gain'] = float(gain[0].text[0])
         
-        # Verifica se ci sono i campi essenziali
-        if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point']):
+        hash_tag = audio.getall('TXXX:X-ANALYSIS-HASH')
+        if hash_tag: data['hash'] = hash_tag[0].text[0]
+        
+        timestamp_tag = audio.getall('TXXX:X-ANALYSIS-TIMESTAMP')
+        if timestamp_tag: data['timestamp'] = timestamp_tag[0].text[0]
+        
+        trim_start = audio.getall('TXXX:X-TRIM-START')
+        if trim_start: data['trim_start'] = float(trim_start[0].text[0])
+        
+        trim_end = audio.getall('TXXX:X-TRIM-END')
+        if trim_end: data['trim_end'] = float(trim_end[0].text[0])
+        
+        eff_dur = audio.getall('TXXX:X-EFFECTIVE-DURATION')
+        if eff_dur: data['effective_duration'] = float(eff_dur[0].text[0])
+        
+        # Verifica se ci sono i campi essenziali (incluso trim_start che forza la re-analisi se assente)
+        if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point', 'hash', 'trim_start']):
             try:
                 mp3 = MP3(file_path)
                 data['duration'] = round(mp3.info.length, 1)
@@ -63,7 +94,8 @@ def read_id3_tags(file_path):
                 data['duration'] = 0.0
             return data
         return None
-    except Exception:
+    except Exception as e:
+        print(f"[Worker] Errore lettura ID3 per {file_path}: {e}")
         return None
 
 def write_id3_tags(file_path, data):
@@ -79,6 +111,11 @@ def write_id3_tags(file_path, data):
         audio.add(TXXX(encoding=3, desc='RMusic_Energy', text=str(data.get('energy', ''))))
         audio.add(TXXX(encoding=3, desc='RMusic_CuePoint', text=str(data.get('cue_point', ''))))
         audio.add(TXXX(encoding=3, desc='RMusic_Gain', text=str(data.get('gain', '0.0'))))
+        audio.add(TXXX(encoding=3, desc='X-ANALYSIS-HASH', text=str(data.get('hash', ''))))
+        audio.add(TXXX(encoding=3, desc='X-ANALYSIS-TIMESTAMP', text=str(data.get('timestamp', ''))))
+        audio.add(TXXX(encoding=3, desc='X-TRIM-START', text=str(data.get('trim_start', '0.0'))))
+        audio.add(TXXX(encoding=3, desc='X-TRIM-END', text=str(data.get('trim_end', '0.0'))))
+        audio.add(TXXX(encoding=3, desc='X-EFFECTIVE-DURATION', text=str(data.get('effective_duration', '0.0'))))
         
         audio.save(file_path, v2_version=3)
     except Exception as e:
@@ -94,8 +131,8 @@ def update_status(progress, text, eta_seconds=None, is_running=True):
     try:
         with open(STATUS_FILE, 'w') as f:
             json.dump(status, f)
-    except Exception:
-        pass 
+    except Exception as e:
+        print(f"[System] Impossibile aggiornare status file: {e}")
 
 def _analyze_worker(file_path, return_dict):
     print(f"   [Worker] Inizio processamento di: {os.path.basename(file_path)}", flush=True)
@@ -105,15 +142,32 @@ def _analyze_worker(file_path, return_dict):
         from pydub import AudioSegment
         warnings.filterwarnings('ignore')
         
-        # --- 0. GAIN & DURATION (Pydub) ---
+        # --- 0. GAIN & DURATION & SILENCE DETECT (Pydub) ---
         try:
+            from pydub.silence import detect_nonsilent
             audio = AudioSegment.from_file(file_path)
             current_db = audio.dBFS
             gain = TARGET_DBFS - current_db
+            
+            nonsilent_ranges = detect_nonsilent(audio, min_silence_len=500, silence_thresh=-50)
+            if nonsilent_ranges:
+                trim_start_ms = nonsilent_ranges[0][0]
+                trim_end_ms = nonsilent_ranges[-1][1]
+            else:
+                trim_start_ms = 0
+                trim_end_ms = len(audio)
+                
+            trim_start_sec = trim_start_ms / 1000.0
+            trim_end_sec = trim_end_ms / 1000.0
+            effective_duration = (trim_end_ms - trim_start_ms) / 1000.0
             duration_sec = len(audio) / 1000.0
+            
         except Exception:
             gain = 0.0
             duration_sec = 0.0
+            trim_start_sec = 0.0
+            trim_end_sec = 0.0
+            effective_duration = 0.0
 
         # --- 1. Librosa Load (Primi 60s per BPM/Key/Energy) ---
         try:
@@ -180,6 +234,9 @@ def _analyze_worker(file_path, return_dict):
         return_dict['camelot'] = camelot
         return_dict['cue_point'] = round(cue_point, 3)
         return_dict['duration'] = round(duration_sec, 1)
+        return_dict['trim_start'] = round(trim_start_sec, 3)
+        return_dict['trim_end'] = round(trim_end_sec, 3)
+        return_dict['effective_duration'] = round(effective_duration, 1)
         return_dict['gain'] = round(gain, 2)
         return_dict['energy'] = energy
         return_dict['success'] = True
@@ -215,14 +272,23 @@ def build_database():
     base_dir = MUSIC_ROOT_DIR
     if os.path.exists(FLAG_FILE):
         try: os.remove(FLAG_FILE)
-        except: pass
+        except Exception as e: print(f"[System] Errore rimozione flag: {e}")
     db = {}
     update_status(0, "Lettura metadati ID3...", eta_seconds=None)
 
+    json_missing = False
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r') as f: db = json.load(f)
-        except json.JSONDecodeError: db = {}
+        except json.JSONDecodeError as e:
+            print(f"[System] JSON corrotto o illeggibile: {e}")
+            db = {}
+            json_missing = True
+    else:
+        json_missing = True
+        
+    if json_missing:
+        print("[System] music_db.json mancante o corrotto. Verrà ricostruito l'indice dai metadati dei file (nessuna ri-analisi necessaria se l'hash combacia).")
 
     # Non usiamo più known_hashes perché ci fidiamo dei file MP3
     # Manteniamo la cache in RAM (db) e controlliamo fisicamente l'ID3 per i file.
@@ -240,14 +306,23 @@ def build_database():
     
     for i, (full_path, rel_path) in enumerate(all_files):
         if i % 20 == 0: 
-            update_status(int((i / len(all_files)) * 5), f"Lettura Tag: {os.path.basename(full_path)}")
+            update_status(int((i / len(all_files)) * 5), f"Verifica integrità: {os.path.basename(full_path)}")
             
+        current_hash = calculate_audio_hash(full_path)
         id3_data = read_id3_tags(full_path)
-        if id3_data:
-            # I tag esistono, usa questi e aggiorna la cache JSON
+        
+        needs_analysis = False
+        
+        if not id3_data or 'hash' not in id3_data:
+            needs_analysis = True
+        elif current_hash and current_hash != id3_data['hash']:
+            print(f"[System] File modificato/corrotto (Hash mismatch): {rel_path}")
+            needs_analysis = True
+            
+        if not needs_analysis:
             db[rel_path] = id3_data
         else:
-            files_needing_analysis.append((full_path, rel_path))
+            files_needing_analysis.append((full_path, rel_path, current_hash))
 
     total_analysis = len(files_needing_analysis)
     
@@ -255,11 +330,11 @@ def build_database():
         print(f"Trovati {total_analysis} file da analizzare.")
         time_window = deque(maxlen=5)
         
-        for i, (full_path, rel_path) in enumerate(files_needing_analysis):
+        for i, (full_path, rel_path, current_hash) in enumerate(files_needing_analysis):
             if os.path.exists(FLAG_FILE):
                 print("Richiesta di interruzione ricevuta!", flush=True)
                 try: os.remove(FLAG_FILE)
-                except: pass
+                except Exception as e: print(f"[System] Errore rimozione flag: {e}")
                 with open(DB_FILE, 'w') as f: json.dump(db, f, indent=4)
                 update_status(progress if 'progress' in locals() else 0, "Analisi interrotta dall'utente.", is_running=False)
                 return
@@ -279,6 +354,9 @@ def build_database():
             if result:
                 # Pulizia: rimuovi chiavi interne del worker se presenti
                 if 'success' in result: del result['success']
+
+                result['hash'] = current_hash
+                result['timestamp'] = datetime.datetime.now().isoformat()
 
                 # Salva i metadati nel file MP3
                 write_id3_tags(full_path, result)

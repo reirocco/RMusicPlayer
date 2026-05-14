@@ -13,6 +13,7 @@ from collections import deque
 from flask import Flask, render_template, jsonify, request, send_file, abort
 import pygame
 import warnings
+from analyzer import calculate_audio_hash, read_id3_tags
 
 warnings.filterwarnings('ignore')
 
@@ -55,6 +56,9 @@ pygame.mixer.init()
 pygame.mixer.set_num_channels(8)
 
 FADE_TIME_MS = 4000
+MIN_DURATION_FOR_CROSSFADE = 10
+DB_RELOAD_INTERVAL_SEC = 5
+
 CHANNEL_END_EVENTS = {
     0: pygame.USEREVENT + 0,
     1: pygame.USEREVENT + 1
@@ -81,6 +85,7 @@ player_state = {
     'is_paused': False, 
     'playlist': [],      
     'queue': [],         
+    'explicit_queue': [],
     'active_channel_id': 0,
     'last_crossfade_time': 0.0
 }
@@ -104,7 +109,7 @@ def clean_startup_temps():
         print(f"[System] Pulizia di {len(temps)} file temporanei orfani...")
         for f in temps:
             try: os.remove(f)
-            except: pass
+            except Exception as e: print(f"[System] Impossibile rimuovere temp file: {e}")
 
 clean_startup_temps()
 
@@ -113,7 +118,8 @@ def load_db():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r') as f: music_db = json.load(f)
-        except json.JSONDecodeError: pass
+        except json.JSONDecodeError as e:
+            print(f"[System] Errore caricamento JSON db: {e}")
 
 load_db()
 
@@ -121,16 +127,24 @@ def start_analyzer_process():
     flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
     if os.path.exists(flag_file):
         try: os.remove(flag_file)
-        except: pass
+        except Exception as e: print(f"[System] Errore rimozione flag file: {e}")
     if os.path.exists(ANALYZER_SCRIPT):
         subprocess.Popen([sys.executable, ANALYZER_SCRIPT])
 
 start_analyzer_process()
 
 def db_reloader():
+    last_mtime = 0
     while True:
-        load_db()
-        time.sleep(5)
+        if os.path.exists(DB_FILE):
+            try:
+                mtime = os.path.getmtime(DB_FILE)
+                if mtime > last_mtime:
+                    load_db()
+                    last_mtime = mtime
+            except Exception as e:
+                print(f"[System] Errore in db_reloader: {e}")
+        time.sleep(DB_RELOAD_INTERVAL_SEC)
 
 threading.Thread(target=db_reloader, daemon=True).start()
 
@@ -143,71 +157,76 @@ def are_keys_compatible(key1_camelot, key2_camelot):
     if letter1 == letter2 and (num2 == num1 - 1 or (num1 == 1 and num2 == 12)): return True
     return False
 
+def sort_pool_automix(start_track, pool):
+    sorted_queue = []
+    current = start_track
+    remaining = list(pool)
+    
+    while remaining:
+        if not current:
+            chosen = random.choice(remaining)
+        else:
+            current_track_data = music_db.get(current)
+            if not current_track_data:
+                chosen = random.choice(remaining)
+            else:
+                harmonic_matches = [
+                    p for p in remaining 
+                    if are_keys_compatible(current_track_data.get('camelot'), music_db.get(p, {}).get('camelot'))
+                ]
+                
+                candidates = harmonic_matches if harmonic_matches else remaining
+                current_bpm = current_track_data.get('bpm', 120)
+                current_energy = current_track_data.get('energy', 5)
+
+                energy_matches = [
+                    p for p in candidates
+                    if abs(music_db.get(p, {}).get('energy', 5) - current_energy) <= 2
+                ]
+                if energy_matches: candidates = energy_matches
+
+                candidates.sort(key=lambda p: abs(music_db.get(p, {}).get('bpm', 120) - current_bpm))
+                chosen = candidates[0]
+                
+        sorted_queue.append(chosen)
+        remaining.remove(chosen)
+        current = chosen
+        
+    return sorted_queue
+
 def pop_next_track():
     global player_state
     
-    if not player_state['queue']:
-        if not player_state['playlist']:
-            return None
+    if player_state['explicit_queue']:
+        return player_state['explicit_queue'].pop(0)
+    
+    if player_state['queue']:
+        return player_state['queue'].pop(0)
+        
+    if player_state['playlist']:
         print("[Automix] Coda vuota. Ricarico e mescolo la playlist originale.")
-        player_state['queue'] = list(player_state['playlist'])
+        start_t = player_state['current_track'] or player_state['playlist'][0]
+        player_state['queue'] = sort_pool_automix(start_t, player_state['playlist'])
+        if player_state['queue']:
+            return player_state['queue'].pop(0)
 
-    current_track_path = player_state['current_track']
-    queue = player_state['queue']
+    return None
 
-    if not current_track_path:
-        chosen = random.choice(queue)
-        queue.remove(chosen)
-        return chosen
-
-    current_track_data = music_db.get(current_track_path)
-    if not current_track_data:
-        chosen = random.choice(queue)
-        queue.remove(chosen)
-        return chosen
-    
-    candidates = [p for p in queue if p != current_track_path]
-    if not candidates:
-        if queue and queue[0] == current_track_path:
-             queue.remove(current_track_path)
-             return current_track_path
-        return None
-
-    harmonic_matches = [
-        p for p in candidates 
-        if are_keys_compatible(current_track_data.get('camelot'), music_db.get(p, {}).get('camelot'))
-    ]
-
-    pool = harmonic_matches if harmonic_matches else candidates
-    current_bpm = current_track_data.get('bpm', 120)
-    current_energy = current_track_data.get('energy', 5)
-
-    # Filtra per Energia (Flow: +/- 2 livelli)
-    energy_matches = [
-        p for p in pool
-        if abs(music_db.get(p, {}).get('energy', 5) - current_energy) <= 2
-    ]
-    if energy_matches: pool = energy_matches
-
-    pool.sort(key=lambda p: abs(music_db.get(p, {}).get('bpm', 120) - current_bpm))
-    
-    chosen = pool[0]
-    if chosen in queue:
-        queue.remove(chosen)
-    
-    print(f"[Automix] Scelta '{chosen}' (E:{music_db.get(chosen,{}).get('energy')} BPM:{music_db.get(chosen,{}).get('bpm')})")
-    return chosen
-
-def preload_worker(mp3_path, wav_output_path, gain_db=0.0, cue_point_sec=0.0):
+def preload_worker(mp3_path, wav_output_path, gain_db=0.0, trim_start=0.0, trim_end=0.0):
     try:
         if sys.platform != "win32": os.nice(19)
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(mp3_path)
-        if cue_point_sec > 0:
-            start_ms = int(cue_point_sec * 1000)
-            if start_ms < len(audio): audio = audio[start_ms:]
+        
+        start_ms = int(trim_start * 1000) if trim_start > 0 else 0
+        end_ms = int(trim_end * 1000) if trim_end > 0 else len(audio)
+        
+        if start_ms > 0 or end_ms < len(audio):
+            audio = audio[start_ms:end_ms]
+            
         if gain_db != 0.0:
             audio = audio.apply_gain(gain_db)
+            
         tmp_path = wav_output_path + ".tmp"
         audio.export(tmp_path, format="wav")
         os.rename(tmp_path, wav_output_path)
@@ -216,24 +235,39 @@ def preload_worker(mp3_path, wav_output_path, gain_db=0.0, cue_point_sec=0.0):
 
 def schedule_preload():
     with audio_lock:
-        if not player_state['playlist'] and not player_state['queue']: return
+        if not player_state['playlist'] and not player_state['queue'] and not player_state['explicit_queue']: return
         if player_state['next_track_queued'] and player_state['next_wav_path']: return
 
-        next_track_path = pop_next_track()
-        if not next_track_path: return 
+        next_track_path = None
+        while True:
+            next_track_path = pop_next_track()
+            if not next_track_path:
+                return 
 
+            full_mp3_path = os.path.join(MUSIC_ROOT_DIR, next_track_path)
+            if not os.path.exists(full_mp3_path):
+                continue
+
+            current_hash = calculate_audio_hash(full_mp3_path)
+            id3_data = read_id3_tags(full_mp3_path)
+            
+            if not id3_data or 'hash' not in id3_data or current_hash != id3_data['hash']:
+                print(f"[System] SALTO (Hash fallito): {next_track_path}")
+                continue
+            
+            break
+            
         unique_wav = os.path.join(BASE_DIR, f"temp_{uuid.uuid4().hex}.wav")
         player_state['next_track_queued'] = next_track_path
         player_state['next_wav_path'] = unique_wav
         
-        full_mp3_path = os.path.join(MUSIC_ROOT_DIR, next_track_path)
-        
         track_info = music_db.get(next_track_path, {})
         gain = track_info.get('gain', 0.0)
-        cue_point = track_info.get('cue_point', 0.0)
+        trim_start = track_info.get('trim_start', 0.0)
+        trim_end = track_info.get('trim_end', 0.0)
         
         print(f"[Scheduler] Preload di '{next_track_path}' (Gain: {gain}dB)")
-        p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, cue_point))
+        p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, trim_start, trim_end))
         p.start()
 
 def cleanup_old_wavs():
@@ -242,7 +276,7 @@ def cleanup_old_wavs():
         if current_wav and os.path.abspath(f) == os.path.abspath(current_wav):
             continue
         try: os.remove(f)
-        except: pass
+        except Exception as e: print(f"[System] Impossibile pulire wav: {e}")
 
 def crossfade_to_next():
     global player_state
@@ -270,13 +304,12 @@ def crossfade_to_next():
         return
 
     sound_duration_sec = next_sound.get_length()
-    play_duration_ms = int((sound_duration_sec * 1000) - FADE_TIME_MS) if sound_duration_sec > 10 else int(sound_duration_sec * 1000)
-    fade_ms = FADE_TIME_MS if sound_duration_sec > 10 else 500
+    fade_ms = FADE_TIME_MS if sound_duration_sec > MIN_DURATION_FOR_CROSSFADE else 500
 
     print(f"[Automix] Crossfade verso '{next_path}' (Dur: {sound_duration_sec:.1f}s)")
 
     next_channel.set_endevent(CHANNEL_END_EVENTS[next_idx])
-    next_channel.play(next_sound, maxtime=play_duration_ms, fade_ms=fade_ms)
+    next_channel.play(next_sound, fade_ms=fade_ms)
     
     if current_channel.get_busy():
         current_channel.fadeout(fade_ms)
@@ -287,18 +320,43 @@ def crossfade_to_next():
     player_state['next_wav_path'] = None
     player_state['last_crossfade_time'] = now
     
+    player_state['current_duration_sec'] = sound_duration_sec
+    player_state['track_pos_sec'] = 0.0
+    player_state['last_play_resume_time'] = now
+    
     threading.Thread(target=cleanup_old_wavs).start()
     threading.Thread(target=schedule_preload, daemon=True).start()
 
 def audio_engine_loop():
     while True:
-        for event in pygame.event.get():
-            if event.type in CHANNEL_END_EVENTS.values():
-                channel_id = event.type - pygame.USEREVENT
-                if channel_id == player_state['active_channel_id']:
-                    crossfade_to_next()
-        if player_state['is_playing'] and not player_state['next_track_queued']:
-            schedule_preload()
+        try:
+            for event in pygame.event.get():
+                if event.type in CHANNEL_END_EVENTS.values():
+                    channel_id = event.type - pygame.USEREVENT
+                    if channel_id == player_state['active_channel_id']:
+                        if player_state['is_playing']:
+                            now = time.time()
+                            if now - player_state.get('last_crossfade_time', 0) >= 2.0:
+                                print("[Automix] Fallback: Brano terminato naturalmente. Passo al successivo.")
+                                crossfade_to_next()
+                                
+            if player_state['is_playing'] and not player_state['is_paused']:
+                pos_sec = player_state.get('track_pos_sec', 0.0) + (time.time() - player_state.get('last_play_resume_time', time.time()))
+                dur_sec = player_state.get('current_duration_sec', 0.0)
+                
+                fade_sec = FADE_TIME_MS / 1000.0
+                if dur_sec > fade_sec and pos_sec >= (dur_sec - fade_sec):
+                    now = time.time()
+                    if now - player_state.get('last_crossfade_time', 0) >= 2.0:
+                        print(f"[Automix] Raggiunto punto di crossfade ({pos_sec:.1f}s / {dur_sec:.1f}s).")
+                        crossfade_to_next()
+                        
+            if player_state['is_playing'] and not player_state['next_track_queued']:
+                schedule_preload()
+                
+        except Exception as e:
+            print(f"Errore engine audio: {e}")
+            
         time.sleep(0.1)
 
 threading.Thread(target=audio_engine_loop, daemon=True).start()
@@ -330,38 +388,61 @@ def play_folder():
         with audio_lock:
             is_already_playing = player_state['is_playing']
             player_state['playlist'] = new_playlist
-            player_state['queue'] = list(new_playlist)
+            
+            # Mettiamo il primo brano in explicit_queue e pre-ordiniamo il resto
+            player_state['explicit_queue'] = [new_playlist[0]]
+            if len(new_playlist) > 1:
+                player_state['queue'] = sort_pool_automix(new_playlist[0], new_playlist[1:])
+            else:
+                player_state['queue'] = []
+                
             player_state['is_playing'] = True
             player_state['is_paused'] = False
 
-        if is_already_playing:
-            end_event_id = CHANNEL_END_EVENTS[player_state['active_channel_id']]
-            pygame.event.post(pygame.event.Event(end_event_id))
-        else:
-            pygame.mixer.stop()
             player_state['next_track_queued'] = None
             player_state['next_wav_path'] = None
             
-            first_track = pop_next_track()
+            first_track = None
+            while True:
+                first_track = pop_next_track()
+                if not first_track: break
+                
+                full_path = os.path.join(MUSIC_ROOT_DIR, first_track)
+                current_hash = calculate_audio_hash(full_path)
+                id3_data = read_id3_tags(full_path)
+                if not id3_data or 'hash' not in id3_data or current_hash != id3_data['hash']:
+                    print(f"[System] SALTO prima traccia corrotta: {first_track}")
+                    continue
+                break
+                
             if first_track:
                 full_path = os.path.join(MUSIC_ROOT_DIR, first_track)
                 tmp_wav = os.path.join(BASE_DIR, f"temp_first_{uuid.uuid4().hex}.wav")
                 
                 track_info = music_db.get(first_track, {})
                 gain = track_info.get('gain', 0.0)
-                cue_point = track_info.get('cue_point', 0.0)
+                trim_start = track_info.get('trim_start', 0.0)
+                trim_end = track_info.get('trim_end', 0.0)
                 
                 try:
                     from pydub import AudioSegment
                     audio = AudioSegment.from_mp3(full_path)
-                    if cue_point > 0:
-                        start_ms = int(cue_point * 1000)
-                        if start_ms < len(audio): audio = audio[start_ms:]
+                    
+                    start_ms = int(trim_start * 1000) if trim_start > 0 else 0
+                    end_ms = int(trim_end * 1000) if trim_end > 0 else len(audio)
+                    
+                    if start_ms > 0 or end_ms < len(audio):
+                        audio = audio[start_ms:end_ms]
+                        
                     if gain != 0: audio = audio.apply_gain(gain)
                     audio.export(tmp_wav, format="wav")
                     
                     player_state['next_track_queued'] = first_track
                     player_state['next_wav_path'] = tmp_wav
+                    
+                    player_state['last_crossfade_time'] = 0
+                    if not is_already_playing:
+                        pygame.mixer.stop()
                     crossfade_to_next()
                 except Exception as e:
                     return jsonify({"status": "error", "message": f"Errore audio: {str(e)}"}), 500
@@ -371,6 +452,56 @@ def play_folder():
         return jsonify({"status": "error", "message": "Accesso Negato"}), 403
     except Exception as e:
         return jsonify({"status": "error", "message": "Errore interno."}), 500
+
+@app.route('/api/queue/add', methods=['POST'])
+def add_to_queue():
+    path = request.json.get('path')
+    is_folder = request.json.get('is_folder', False)
+    if not path: return jsonify({"status": "error", "message": "Nessun percorso fornito"}), 400
+        
+    try:
+        target_dir = validate_path(MUSIC_ROOT_DIR, path)
+        if not os.path.exists(target_dir): return jsonify({"status": "error"}), 404
+            
+        with audio_lock:
+            if is_folder:
+                new_playlist = []
+                for root, dirs, files in os.walk(target_dir):
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    for file in sorted(files):
+                        if file.endswith('.mp3') and not file.startswith('.'):
+                            full_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(full_path, MUSIC_ROOT_DIR).replace('\\', '/')
+                            new_playlist.append(rel_path)
+                if new_playlist:
+                    first_track = new_playlist[0]
+                    pool = new_playlist[1:]
+                    
+                    # Svuota la coda e la sostituisce con la nuova cartella
+                    player_state['explicit_queue'] = [first_track]
+                    player_state['playlist'] = list(new_playlist)
+                    player_state['queue'] = sort_pool_automix(first_track, pool)
+            else:
+                rel_path = os.path.relpath(target_dir, MUSIC_ROOT_DIR).replace('\\', '/')
+                player_state['explicit_queue'].append(rel_path)
+                
+            if not player_state['is_playing'] and not pygame.mixer.get_busy():
+                player_state['is_playing'] = True
+                player_state['is_paused'] = False
+                end_event_id = CHANNEL_END_EVENTS[player_state['active_channel_id']]
+                pygame.event.post(pygame.event.Event(end_event_id))
+            else:
+                old_preloaded = player_state.get('next_track_queued')
+                if old_preloaded:
+                    if not is_folder:
+                        player_state['queue'].insert(0, old_preloaded)
+                    
+                player_state['next_track_queued'] = None
+                player_state['next_wav_path'] = None
+                threading.Thread(target=schedule_preload, daemon=True).start()
+                
+        return jsonify({"status": "ok"})
+    except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/folders', defaults={'subpath': ''})
 @app.route('/api/folders/<path:subpath>')
@@ -398,9 +529,21 @@ def api_folders(subpath):
                     items.append({
                         'name': d, 
                         'path': os.path.relpath(p, MUSIC_ROOT_DIR).replace('\\', '/'), 
+                        'is_folder': True,
                         'has_subfolders': has_sub,
                         'track_count': len([f for f in os.listdir(p) if f.endswith('.mp3') and not f.startswith('.')])
                     })
+            
+            files_list = []
+            for f in sorted(os.listdir(target_dir)):
+                if f.endswith('.mp3') and not f.startswith('.'):
+                    p = os.path.join(target_dir, f)
+                    files_list.append({
+                        'name': f,
+                        'path': os.path.relpath(p, MUSIC_ROOT_DIR).replace('\\', '/'),
+                        'is_folder': False
+                    })
+            items.extend(files_list)
         except OSError: pass
         
     return jsonify({
@@ -419,7 +562,21 @@ def next_track():
 
 @app.route('/api/queue')
 def get_queue():
-    return jsonify({'queue': player_state['queue'], 'count': len(player_state['queue'])})
+    ui_explicit = list(player_state['explicit_queue'])
+    ui_automix = list(player_state['queue'])
+    
+    preloaded = player_state.get('next_track_queued')
+    if preloaded:
+        if ui_explicit:
+            ui_explicit.insert(0, preloaded)
+        else:
+            ui_automix.insert(0, preloaded)
+            
+    return jsonify({
+        'explicit_queue': ui_explicit,
+        'automix_queue': ui_automix,
+        'count': len(ui_explicit) + len(ui_automix)
+    })
 
 @app.route('/api/status')
 def status():
@@ -428,11 +585,19 @@ def status():
     # Rimuoviamo oggetti non serializzabili dallo stato
     safe_state = {k: v for k, v in player_state.items() if not callable(v) and k != 'queue' and k != 'playlist'}
     
+    preloaded_count = 1 if player_state.get('next_track_queued') else 0
+    
+    pos = player_state.get('track_pos_sec', 0.0)
+    if player_state.get('is_playing') and not player_state.get('is_paused'):
+        pos += time.time() - player_state.get('last_play_resume_time', time.time())
+        
     safe_state.update({
         'bpm': info.get('bpm'), 'key': info.get('key'),
         'camelot': info.get('camelot'), 'cue_point': info.get('cue_point'),
         'energy': info.get('energy'),
-        'queue_count': len(player_state['queue'])
+        'queue_count': len(player_state['queue']) + len(player_state['explicit_queue']) + preloaded_count,
+        'duration': player_state.get('current_duration_sec', 0.0),
+        'position': pos
     })
     return jsonify(safe_state)
 
@@ -510,8 +675,11 @@ def analysis_status():
 def toggle_playback():
     if player_state['is_paused']:
         pygame.mixer.unpause()
+        player_state['last_play_resume_time'] = time.time()
     else:
         pygame.mixer.pause()
+        elapsed = time.time() - player_state.get('last_play_resume_time', time.time())
+        player_state['track_pos_sec'] = player_state.get('track_pos_sec', 0.0) + elapsed
     player_state['is_paused'] = not player_state['is_paused']
     return jsonify({"status": "ok"})
 

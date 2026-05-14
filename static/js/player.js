@@ -179,29 +179,75 @@ function renderCurrentPage() {
     pageItems.forEach(item => {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-4 col-lg-3';
+        
         const pad = document.createElement('div');
-        const typeClass = item.has_subfolders ? 'folder' : 'playlist';
+        let typeClass = item.is_folder ? (item.has_subfolders ? 'folder' : 'playlist') : 'file';
         pad.className = `glass-panel glass-card ${typeClass}`;
-        const iconClass = item.has_subfolders ? 'bi-folder2-open' : 'bi-music-note-list';
+        
+        if (!item.is_folder) {
+            pad.style.background = 'linear-gradient(145deg, rgba(139, 92, 246, 0.1) 0%, rgba(139, 92, 246, 0.02) 100%)';
+            pad.style.borderColor = 'rgba(139, 92, 246, 0.2)';
+            pad.style.minHeight = '130px';
+        }
+        
+        const iconClass = item.is_folder ? (item.has_subfolders ? 'bi-folder2-open' : 'bi-music-note-list') : 'bi-music-note';
         const icon = document.createElement('i');
         icon.className = `bi ${iconClass}`;
+        if (!item.is_folder) {
+            icon.style.fontSize = '2.5rem';
+            icon.style.color = '#cbd5e1';
+            icon.style.marginBottom = '5px';
+        }
+        
         const title = document.createElement('span');
         title.className = 'card-title';
-        title.innerText = item.name;
+        title.innerText = item.name.replace('.mp3', '');
+        if (!item.is_folder) title.style.fontSize = '0.9rem';
+        
         pad.appendChild(icon);
         pad.appendChild(title);
-        if (!item.has_subfolders && item.track_count !== undefined) {
+        
+        if (item.is_folder && item.track_count !== undefined) {
             const count = document.createElement('span');
             count.className = 'text-muted small mt-1';
             count.innerText = item.track_count + ' brani';
             pad.appendChild(count);
         }
+        
+        const addBtn = document.createElement('button');
+        addBtn.className = 'btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2 rounded-circle';
+        addBtn.innerHTML = '<i class="bi bi-plus-lg"></i>';
+        addBtn.style.zIndex = '10';
+        addBtn.style.width = '32px';
+        addBtn.style.height = '32px';
+        addBtn.style.display = 'flex';
+        addBtn.style.alignItems = 'center';
+        addBtn.style.justifyContent = 'center';
+        addBtn.style.border = 'none';
+        addBtn.style.background = 'rgba(255,255,255,0.1)';
+        addBtn.onclick = (e) => {
+            e.stopPropagation();
+            addToQueue(item.path, item.is_folder);
+            addBtn.innerHTML = '<i class="bi bi-check-lg text-success"></i>';
+            setTimeout(() => addBtn.innerHTML = '<i class="bi bi-plus-lg"></i>', 1000);
+        };
+        pad.appendChild(addBtn);
+        
         pad.onclick = () => {
-            if (item.has_subfolders) {
-                pathHistory.push(currentPath);
-                fetchFolders(item.path);
+            if (item.is_folder) {
+                if (item.has_subfolders) {
+                    pathHistory.push(currentPath);
+                    fetchFolders(item.path);
+                } else {
+                    startServerAutomix(item.path);
+                }
             } else {
-                startServerAutomix(item.path);
+                addToQueue(item.path, false);
+                let iconEl = pad.querySelector('i.bi-music-note');
+                if (iconEl) {
+                    iconEl.className = 'bi bi-check-circle-fill text-success';
+                    setTimeout(() => iconEl.className = 'bi bi-music-note', 1000);
+                }
             }
         };
         col.appendChild(pad);
@@ -240,6 +286,19 @@ function startServerAutomix(folderPath) {
     .then(res => res.json())
     .then(data => {
         if(data.status === "error") alert("Errore: " + data.message);
+    });
+}
+
+function addToQueue(path, isFolder) {
+    fetch('/api/queue/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: path, is_folder: isFolder })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.status === "error") alert("Errore: " + data.message);
+        else updateServerStatus();
     });
 }
 
@@ -288,15 +347,34 @@ function updateServerStatus() {
                     queueBadge.style.display = 'inline-block';
                 }
 
+                let dur = data.duration || 0;
+                let pos = data.position || 0;
+                let pct = dur > 0 ? Math.min(100, Math.max(0, (pos / dur) * 100)) : 0;
+                
+                document.getElementById('deck-progress').style.width = pct + "%";
+                document.getElementById('deck-time-pos').innerText = formatDuration(pos);
+                document.getElementById('deck-time-left').innerText = "-" + formatDuration(dur - pos);
+
             } else {
                 statusText.innerText = "Standby";
                 playPauseBtn.classList.remove('playing');
                 if(nextBtn) nextBtn.disabled = true;
                 if(queueBtn) queueBtn.disabled = true;
                 if(queueBadge) queueBadge.style.display = 'none';
+                
+                document.getElementById('deck-progress').style.width = "0%";
+                document.getElementById('deck-time-pos').innerText = "0:00";
+                document.getElementById('deck-time-left').innerText = "-0:00";
             }
         })
         .catch(() => {});
+}
+
+function formatDuration(sec) {
+    if (!sec || isNaN(sec) || sec < 0) return "0:00";
+    let m = Math.floor(sec / 60);
+    let s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
 function togglePlayPause() {
@@ -317,26 +395,54 @@ function openQueue() {
         .then(res => res.json())
         .then(data => {
             listEl.innerHTML = '';
-            if (data.queue && data.queue.length > 0) {
-                const limit = 500;
-                data.queue.slice(0, limit).forEach(path => {
+            
+            if (data.explicit_queue && data.explicit_queue.length > 0) {
+                let header = document.createElement('li');
+                header.className = 'queue-item-full fw-bold text-uppercase';
+                header.style.color = 'var(--accent-color)';
+                header.style.background = 'rgba(217, 70, 239, 0.1)';
+                header.innerText = 'Prossimi Brani (Manuale)';
+                listEl.appendChild(header);
+                
+                data.explicit_queue.forEach(path => {
                     let li = document.createElement('li');
                     li.className = 'queue-item-full';
                     let icon = document.createElement('i');
-                    icon.className = 'bi bi-music-note-beamed';
+                    icon.className = 'bi bi-music-note-list me-3 text-warning';
                     let nameSpan = document.createElement('span');
                     nameSpan.innerText = path.split('/').pop().replace('.mp3', '');
                     li.appendChild(icon);
                     li.appendChild(nameSpan);
                     listEl.appendChild(li);
                 });
-                if(data.queue.length > limit) {
+            }
+            
+            if (data.automix_queue && data.automix_queue.length > 0) {
+                let header = document.createElement('li');
+                header.className = 'queue-item-full fw-bold text-uppercase mt-3';
+                header.style.color = '#a78bfa';
+                header.innerText = 'Coda Automix';
+                listEl.appendChild(header);
+                
+                const limit = 300;
+                data.automix_queue.slice(0, limit).forEach(path => {
+                    let li = document.createElement('li');
+                    li.className = 'queue-item-full';
+                    let icon = document.createElement('i');
+                    icon.className = 'bi bi-music-note-beamed me-3 text-secondary';
+                    let nameSpan = document.createElement('span');
+                    nameSpan.innerText = path.split('/').pop().replace('.mp3', '');
+                    li.appendChild(icon);
+                    li.appendChild(nameSpan);
+                    listEl.appendChild(li);
+                });
+                if(data.automix_queue.length > limit) {
                     let li = document.createElement('li');
                     li.className = 'queue-item-full text-center fst-italic';
-                    li.innerText = `...e altri ${data.queue.length - limit} brani`;
+                    li.innerText = `...e altri ${data.automix_queue.length - limit} brani`;
                     listEl.appendChild(li);
                 }
-            } else {
+            } else if (!data.explicit_queue || data.explicit_queue.length === 0) {
                 listEl.innerText = 'Coda vuota';
             }
         })
@@ -434,6 +540,9 @@ function openConsoleModal() {
     const settingsModal = bootstrap.Modal.getInstance(settingsEl);
     if(settingsModal) settingsModal.hide();
 
+    if (logInterval) {
+        clearInterval(logInterval);
+    }
     fetchLogs();
     logInterval = setInterval(fetchLogs, 1000);
 }
