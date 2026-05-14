@@ -212,7 +212,7 @@ def pop_next_track():
 
     return None
 
-def preload_worker(mp3_path, wav_output_path, gain_db=0.0, trim_start=0.0, trim_end=0.0):
+def preload_worker(mp3_path, wav_output_path, gain_db=0.0, peak_db=0.0, trim_start=0.0, trim_end=0.0):
     try:
         if sys.platform != "win32": os.nice(19)
         from pydub import AudioSegment
@@ -225,6 +225,10 @@ def preload_worker(mp3_path, wav_output_path, gain_db=0.0, trim_start=0.0, trim_
             audio = audio[start_ms:end_ms]
             
         if gain_db != 0.0:
+            if peak_db != 0.0 and (gain_db + peak_db) > 0.0:
+                safe_gain = -peak_db
+                print(f"[Worker] Gain ridotto da {gain_db}dB a {safe_gain}dB per evitare clipping (Peak: {peak_db}dBFS)")
+                gain_db = safe_gain
             audio = audio.apply_gain(gain_db)
             
         tmp_path = wav_output_path + ".tmp"
@@ -263,11 +267,12 @@ def schedule_preload():
         
         track_info = music_db.get(next_track_path, {})
         gain = track_info.get('gain', 0.0)
+        peak = track_info.get('peak', 0.0)
         trim_start = track_info.get('trim_start', 0.0)
         trim_end = track_info.get('trim_end', 0.0)
         
-        print(f"[Scheduler] Preload di '{next_track_path}' (Gain: {gain}dB)")
-        p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, trim_start, trim_end))
+        print(f"[Scheduler] Preload di '{next_track_path}' (Gain: {gain}dB, Peak: {peak}dB)")
+        p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, peak, trim_start, trim_end))
         p.start()
 
 def cleanup_old_wavs():
@@ -421,6 +426,7 @@ def play_folder():
                 
                 track_info = music_db.get(first_track, {})
                 gain = track_info.get('gain', 0.0)
+                peak = track_info.get('peak', 0.0)
                 trim_start = track_info.get('trim_start', 0.0)
                 trim_end = track_info.get('trim_end', 0.0)
                 
@@ -434,7 +440,12 @@ def play_folder():
                     if start_ms > 0 or end_ms < len(audio):
                         audio = audio[start_ms:end_ms]
                         
-                    if gain != 0: audio = audio.apply_gain(gain)
+                    if gain != 0:
+                        if peak != 0.0 and (gain + peak) > 0.0:
+                            safe_gain = -peak
+                            print(f"[System] Gain prima traccia ridotto da {gain}dB a {safe_gain}dB per evitare clipping (Peak: {peak}dBFS)")
+                            gain = safe_gain
+                        audio = audio.apply_gain(gain)
                     audio.export(tmp_wav, format="wav")
                     
                     player_state['next_track_queued'] = first_track

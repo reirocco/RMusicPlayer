@@ -13,7 +13,7 @@ MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
 DB_FILE = os.path.join(MUSIC_ROOT_DIR, 'music_db.json')
 STATUS_FILE = os.path.join(MUSIC_ROOT_DIR, 'analysis_status.json')
 FLAG_FILE = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
-TARGET_DBFS = -14.0 
+TARGET_LUFS = -14.0 
 
 CAMELOT_MAP = {
     'C': '8B', 'G': '9B', 'D': '10B', 'A': '11B', 'E': '12B', 'B': '1B', 
@@ -67,8 +67,14 @@ def read_id3_tags(file_path):
         cue_point = audio.getall('TXXX:RMusic_CuePoint')
         if cue_point: data['cue_point'] = float(cue_point[0].text[0])
         
-        gain = audio.getall('TXXX:RMusic_Gain')
+        gain = audio.getall('TXXX:X-REPLAYGAIN-TRACK')
         if gain: data['gain'] = float(gain[0].text[0])
+        else:
+            old_gain = audio.getall('TXXX:RMusic_Gain')
+            if old_gain: data['gain'] = float(old_gain[0].text[0])
+            
+        peak = audio.getall('TXXX:X-REPLAYGAIN-PEAK')
+        if peak: data['peak'] = float(peak[0].text[0])
         
         hash_tag = audio.getall('TXXX:X-ANALYSIS-HASH')
         if hash_tag: data['hash'] = hash_tag[0].text[0]
@@ -85,8 +91,8 @@ def read_id3_tags(file_path):
         eff_dur = audio.getall('TXXX:X-EFFECTIVE-DURATION')
         if eff_dur: data['effective_duration'] = float(eff_dur[0].text[0])
         
-        # Verifica se ci sono i campi essenziali (incluso trim_start che forza la re-analisi se assente)
-        if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point', 'hash', 'trim_start']):
+        # Verifica se ci sono i campi essenziali (incluso peak che forza la re-analisi se assente per EBU R128)
+        if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point', 'hash', 'trim_start', 'peak']):
             try:
                 mp3 = MP3(file_path)
                 data['duration'] = round(mp3.info.length, 1)
@@ -110,7 +116,8 @@ def write_id3_tags(file_path, data):
         audio.add(TXXX(encoding=3, desc='RMusic_Camelot', text=str(data.get('camelot', ''))))
         audio.add(TXXX(encoding=3, desc='RMusic_Energy', text=str(data.get('energy', ''))))
         audio.add(TXXX(encoding=3, desc='RMusic_CuePoint', text=str(data.get('cue_point', ''))))
-        audio.add(TXXX(encoding=3, desc='RMusic_Gain', text=str(data.get('gain', '0.0'))))
+        audio.add(TXXX(encoding=3, desc='X-REPLAYGAIN-TRACK', text=str(data.get('gain', '0.0'))))
+        audio.add(TXXX(encoding=3, desc='X-REPLAYGAIN-PEAK', text=str(data.get('peak', '0.0'))))
         audio.add(TXXX(encoding=3, desc='X-ANALYSIS-HASH', text=str(data.get('hash', ''))))
         audio.add(TXXX(encoding=3, desc='X-ANALYSIS-TIMESTAMP', text=str(data.get('timestamp', ''))))
         audio.add(TXXX(encoding=3, desc='X-TRIM-START', text=str(data.get('trim_start', '0.0'))))
@@ -142,12 +149,10 @@ def _analyze_worker(file_path, return_dict):
         from pydub import AudioSegment
         warnings.filterwarnings('ignore')
         
-        # --- 0. GAIN & DURATION & SILENCE DETECT (Pydub) ---
+        # --- 0. DURATION & SILENCE DETECT (Pydub) ---
         try:
             from pydub.silence import detect_nonsilent
             audio = AudioSegment.from_file(file_path)
-            current_db = audio.dBFS
-            gain = TARGET_DBFS - current_db
             
             nonsilent_ranges = detect_nonsilent(audio, min_silence_len=500, silence_thresh=-50)
             if nonsilent_ranges:
@@ -163,11 +168,31 @@ def _analyze_worker(file_path, return_dict):
             duration_sec = len(audio) / 1000.0
             
         except Exception:
-            gain = 0.0
             duration_sec = 0.0
             trim_start_sec = 0.0
             trim_end_sec = 0.0
             effective_duration = 0.0
+
+        # --- 0.5 EBU R128 LOUDNESS NORMALIZATION ---
+        try:
+            import subprocess, re
+            cmd = ['ffmpeg', '-nostats', '-i', file_path, '-filter_complex', 'ebur128=peak=true', '-f', 'null', '-']
+            output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+            
+            i_match = re.search(r'I:\s+([-\d\.]+)\s+LUFS', output)
+            peak_match = re.search(r'Peak:\s+([-\d\.]+)\s+dBFS', output)
+            
+            if i_match and peak_match:
+                i_lufs = float(i_match.group(1))
+                peak = float(peak_match.group(1))
+                gain = TARGET_LUFS - i_lufs
+            else:
+                gain = 0.0
+                peak = 0.0
+        except Exception as e:
+            print(f"   [Worker] Errore EBU R128: {e}")
+            gain = 0.0
+            peak = 0.0
 
         # --- 1. Librosa Load (Primi 60s per BPM/Key/Energy) ---
         try:
@@ -238,6 +263,7 @@ def _analyze_worker(file_path, return_dict):
         return_dict['trim_end'] = round(trim_end_sec, 3)
         return_dict['effective_duration'] = round(effective_duration, 1)
         return_dict['gain'] = round(gain, 2)
+        return_dict['peak'] = round(peak, 2)
         return_dict['energy'] = energy
         return_dict['success'] = True
         

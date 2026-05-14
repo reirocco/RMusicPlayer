@@ -81,7 +81,8 @@ RestartSec=5
 # Variabili d'ambiente per Pygame headless
 Environment=PYTHONUNBUFFERED=1
 Environment=SDL_AUDIODRIVER=alsa
-Environment=XDG_RUNTIME_DIR=/run/user/\$(id -u)
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
 
 [Install]
 WantedBy=default.target
