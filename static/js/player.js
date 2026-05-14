@@ -347,6 +347,20 @@ function updateServerStatus() {
                     queueBadge.style.display = 'inline-block';
                 }
 
+                const loopBtn = document.getElementById('automixLoopBtn');
+                const loopIcon = document.getElementById('automixLoopIcon');
+                if (loopBtn && loopIcon) {
+                    if (data.is_folder_loop_active) {
+                        loopIcon.className = "bi bi-infinity";
+                        loopIcon.style.color = "var(--accent-color)";
+                        loopBtn.style.borderColor = "var(--accent-color)";
+                    } else {
+                        loopIcon.className = "bi bi-infinity";
+                        loopIcon.style.color = "";
+                        loopBtn.style.borderColor = "rgba(255,255,255,0.1)";
+                    }
+                }
+
                 let dur = data.duration || 0;
                 let pos = data.position || 0;
                 let pct = dur > 0 ? Math.min(100, Math.max(0, (pos / dur) * 100)) : 0;
@@ -383,6 +397,14 @@ function togglePlayPause() {
 
 function triggerNextTrack() {
     fetch('/api/next_track', { method: 'POST' });
+}
+
+function toggleAutomixLoop() {
+    fetch('/api/toggle_loop', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            updateServerStatus();
+        });
 }
 
 function openQueue() {

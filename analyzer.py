@@ -93,6 +93,8 @@ def read_id3_tags(file_path):
         
         # Verifica se ci sono i campi essenziali (incluso peak che forza la re-analisi se assente per EBU R128)
         if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point', 'hash', 'trim_start', 'peak']):
+            if data.get('gain') == 56.0:
+                return None # Forza la rianalisi per i file affetti dal bug del regex ebur128
             try:
                 mp3 = MP3(file_path)
                 data['duration'] = round(mp3.info.length, 1)
@@ -179,11 +181,11 @@ def _analyze_worker(file_path, return_dict):
             cmd = ['ffmpeg', '-nostats', '-i', file_path, '-filter_complex', 'ebur128=peak=true', '-f', 'null', '-']
             output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
             
-            i_match = re.search(r'I:\s+([-\d\.]+)\s+LUFS', output)
+            i_matches = re.findall(r'I:\s+([-\d\.]+)\s+LUFS', output)
             peak_match = re.search(r'Peak:\s+([-\d\.]+)\s+dBFS', output)
             
-            if i_match and peak_match:
-                i_lufs = float(i_match.group(1))
+            if i_matches and peak_match:
+                i_lufs = float(i_matches[-1])
                 peak = float(peak_match.group(1))
                 gain = TARGET_LUFS - i_lufs
             else:

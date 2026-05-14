@@ -87,7 +87,9 @@ player_state = {
     'queue': [],         
     'explicit_queue': [],
     'active_channel_id': 0,
-    'last_crossfade_time': 0.0
+    'last_crossfade_time': 0.0,
+    'is_folder_loop_active': False,
+    'current_folder_source': None
 }
 
 audio_lock = threading.Lock()
@@ -194,6 +196,34 @@ def sort_pool_automix(start_track, pool):
         
     return sorted_queue
 
+def refresh_queue_with_automix():
+    folder = player_state.get('current_folder_source')
+    if folder is None: return
+    
+    target_dir = os.path.join(MUSIC_ROOT_DIR, folder) if folder else MUSIC_ROOT_DIR
+    if not os.path.exists(target_dir): return
+    
+    files = []
+    current = player_state.get('current_track')
+    
+    for f in os.listdir(target_dir):
+        if f.endswith('.mp3') and not f.startswith('.'):
+            full_path = os.path.join(target_dir, f)
+            rel_path = os.path.relpath(full_path, MUSIC_ROOT_DIR).replace('\\', '/')
+            if rel_path == current:
+                continue
+            
+            db_info = music_db.get(rel_path, {})
+            # Aggiungiamo solo brani analizzati e non corrotti
+            if db_info and db_info.get('hash') and 'trim_start' in db_info:
+                files.append(rel_path)
+    
+    if files:
+        random.shuffle(files)
+        with audio_lock:
+            print(f"[Automix] Loop Cartella: accodati {len(files)} brani casuali dalla sorgente '{folder}'.")
+            player_state['queue'].extend(files)
+
 def pop_next_track():
     global player_state
     
@@ -201,10 +231,19 @@ def pop_next_track():
         return player_state['explicit_queue'].pop(0)
     
     if player_state['queue']:
-        return player_state['queue'].pop(0)
+        track = player_state['queue'].pop(0)
+        if len(player_state['queue']) == 0 and player_state.get('is_folder_loop_active'):
+            threading.Thread(target=refresh_queue_with_automix, daemon=True).start()
+        return track
         
+    if player_state.get('is_folder_loop_active'):
+        print("[Automix] Coda vuota ma Loop attivo. Ricarico sincrono...")
+        refresh_queue_with_automix()
+        if player_state['queue']:
+            return player_state['queue'].pop(0)
+            
     if player_state['playlist']:
-        print("[Automix] Coda vuota. Ricarico e mescolo la playlist originale.")
+        print("[Automix] Coda vuota (Loop inattivo). Ricarico e mescolo la playlist originale.")
         start_t = player_state['current_track'] or player_state['playlist'][0]
         player_state['queue'] = sort_pool_automix(start_t, player_state['playlist'])
         if player_state['queue']:
@@ -294,13 +333,23 @@ def crossfade_to_next():
     current_channel = pygame.mixer.Channel(current_idx)
     next_channel = pygame.mixer.Channel(next_idx)
 
-    next_path = player_state['next_track_queued']
-    wav_path = player_state['next_wav_path']
-    
-    if not next_path or not wav_path or not os.path.exists(wav_path):
-        print("[Automix] Coda di preload vuota o WAV non pronto. Riprogrammo.")
+    next_path = player_state.get('next_track_queued')
+    wav_path = player_state.get('next_wav_path')
+
+    if not next_path or not wav_path:
+        print("[Automix] Coda di preload vuota. Riprogrammo.")
         schedule_preload()
         return
+
+    if not os.path.exists(wav_path):
+        print(f"[Automix] Attendendo che il WAV di '{next_path}' sia pronto...")
+        wait_start = time.time()
+        while not os.path.exists(wav_path):
+            if time.time() - wait_start > 20:
+                print("[Automix] Timeout! Il WAV non è stato generato in tempo.")
+                return
+            time.sleep(0.1)
+        print(f"[Automix] WAV pronto dopo {time.time() - wait_start:.1f}s.")
 
     try:
         next_sound = pygame.mixer.Sound(wav_path)
@@ -314,6 +363,7 @@ def crossfade_to_next():
     print(f"[Automix] Crossfade verso '{next_path}' (Dur: {sound_duration_sec:.1f}s)")
 
     next_channel.set_endevent(CHANNEL_END_EVENTS[next_idx])
+    next_channel.set_volume(1.0)
     next_channel.play(next_sound, fade_ms=fade_ms)
     
     if current_channel.get_busy():
@@ -342,7 +392,7 @@ def audio_engine_loop():
                         if player_state['is_playing']:
                             now = time.time()
                             if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                                print("[Automix] Fallback: Brano terminato naturalmente. Passo al successivo.")
+                                print("[Automix] Richiesto passaggio al brano successivo (Skip o Fine brano).")
                                 crossfade_to_next()
                                 
             if player_state['is_playing'] and not player_state['is_paused']:
@@ -391,6 +441,7 @@ def play_folder():
             return jsonify({"status": "error", "message": "Nessun file audio trovato."}), 404
 
         with audio_lock:
+            player_state['current_folder_source'] = folder
             is_already_playing = player_state['is_playing']
             player_state['playlist'] = new_playlist
             
@@ -570,6 +621,18 @@ def next_track():
         pygame.event.post(pygame.event.Event(end_event_id))
         return jsonify({"status": "fading"})
     return jsonify({"status": "stopped"})
+
+@app.route('/api/toggle_loop', methods=['POST'])
+def toggle_loop():
+    with audio_lock:
+        player_state['is_folder_loop_active'] = not player_state.get('is_folder_loop_active', False)
+        active = player_state['is_folder_loop_active']
+        
+        # Se è appena stato attivato e la coda è vuota, forziamo il ricaricamento
+        if active and len(player_state['queue']) == 0 and player_state.get('current_folder_source') is not None:
+            threading.Thread(target=refresh_queue_with_automix, daemon=True).start()
+            
+    return jsonify({"status": "ok", "is_folder_loop_active": active})
 
 @app.route('/api/queue')
 def get_queue():
