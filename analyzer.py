@@ -49,7 +49,12 @@ def calculate_audio_hash(file_path):
 
 def read_id3_tags(file_path):
     try:
-        audio = ID3(file_path)
+        from mutagen import File
+        audio_file = File(file_path)
+        if audio_file is None or audio_file.tags is None:
+            return None
+            
+        audio = audio_file.tags
         data = {}
         
         bpm_frames = audio.getall('TBPM')
@@ -102,8 +107,7 @@ def read_id3_tags(file_path):
                 data['duration'] = 0.0
             return data
         return None
-    except Exception as e:
-        print(f"[Worker] Errore lettura ID3 per {file_path}: {e}")
+    except Exception:
         return None
 
 def write_id3_tags(file_path, data):
@@ -278,7 +282,7 @@ def safe_analyze_audio(file_path):
         return_dict = manager.dict()
         p = multiprocessing.Process(target=_analyze_worker, args=(file_path, return_dict))
         p.start()
-        p.join(timeout=60)
+        p.join(timeout=600) # 10 minuti per i mix lunghi
         
         if p.is_alive():
             p.terminate()
