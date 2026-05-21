@@ -96,6 +96,18 @@ def read_id3_tags(file_path):
         eff_dur = audio.getall('TXXX:X-EFFECTIVE-DURATION')
         if eff_dur: data['effective_duration'] = float(eff_dur[0].text[0])
         
+        is_long = audio.getall('TXXX:X-IS-LONG-MIX')
+        if is_long and is_long[0].text[0] == 'True':
+            data['is_long_mix'] = True
+        
+        if data.get('is_long_mix'):
+            try:
+                mp3 = MP3(file_path)
+                data['duration'] = round(mp3.info.length, 1)
+            except:
+                data['duration'] = 0.0
+            return data
+        
         # Verifica se ci sono i campi essenziali (incluso peak che forza la re-analisi se assente per EBU R128)
         if all(k in data for k in ['bpm', 'key', 'energy', 'cue_point', 'hash', 'trim_start', 'peak']):
             if data.get('gain') == 56.0:
@@ -129,6 +141,7 @@ def write_id3_tags(file_path, data):
         audio.add(TXXX(encoding=3, desc='X-TRIM-START', text=str(data.get('trim_start', '0.0'))))
         audio.add(TXXX(encoding=3, desc='X-TRIM-END', text=str(data.get('trim_end', '0.0'))))
         audio.add(TXXX(encoding=3, desc='X-EFFECTIVE-DURATION', text=str(data.get('effective_duration', '0.0'))))
+        audio.add(TXXX(encoding=3, desc='X-IS-LONG-MIX', text=str(data.get('is_long_mix', 'False'))))
         
         audio.save(file_path, v2_version=3)
     except Exception as e:
@@ -150,6 +163,20 @@ def update_status(progress, text, eta_seconds=None, is_running=True):
 def _analyze_worker(file_path, return_dict):
     print(f"   [Worker] Inizio processamento di: {os.path.basename(file_path)}", flush=True)
     try:
+        from mutagen.mp3 import MP3
+        duration_sec = 0.0
+        try:
+            duration_sec = MP3(file_path).info.length
+        except:
+            pass
+            
+        if duration_sec > 300.0:
+            print(f"   [Worker] Mix lungo rilevato ({duration_sec:.1f}s). Analisi bypassata.", flush=True)
+            return_dict['duration'] = round(duration_sec, 1)
+            return_dict['is_long_mix'] = True
+            return_dict['success'] = True
+            return
+
         import librosa
         import numpy as np
         from pydub import AudioSegment

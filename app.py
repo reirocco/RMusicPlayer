@@ -213,10 +213,7 @@ def refresh_queue_with_automix():
             if rel_path == current:
                 continue
             
-            db_info = music_db.get(rel_path, {})
-            # Aggiungiamo solo brani analizzati e non corrotti
-            if db_info and db_info.get('hash') and 'trim_start' in db_info:
-                files.append(rel_path)
+            files.append(rel_path)
     
     if files:
         random.shuffle(files)
@@ -291,13 +288,6 @@ def schedule_preload():
             if not os.path.exists(full_mp3_path):
                 continue
 
-            current_hash = calculate_audio_hash(full_mp3_path)
-            id3_data = read_id3_tags(full_mp3_path)
-            
-            if not id3_data or 'hash' not in id3_data or current_hash != id3_data['hash']:
-                print(f"[System] SALTO (Hash fallito): {next_track_path}")
-                continue
-            
             break
             
         unique_wav = os.path.join(BASE_DIR, f"temp_{uuid.uuid4().hex}.wav")
@@ -458,18 +448,7 @@ def play_folder():
             player_state['next_track_queued'] = None
             player_state['next_wav_path'] = None
             
-            first_track = None
-            while True:
-                first_track = pop_next_track()
-                if not first_track: break
-                
-                full_path = os.path.join(MUSIC_ROOT_DIR, first_track)
-                current_hash = calculate_audio_hash(full_path)
-                id3_data = read_id3_tags(full_path)
-                if not id3_data or 'hash' not in id3_data or current_hash != id3_data['hash']:
-                    print(f"[System] SALTO prima traccia corrotta: {first_track}")
-                    continue
-                break
+            first_track = pop_next_track()
                 
             if first_track:
                 full_path = os.path.join(MUSIC_ROOT_DIR, first_track)
