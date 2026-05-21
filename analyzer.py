@@ -14,6 +14,7 @@ DB_FILE = os.path.join(MUSIC_ROOT_DIR, 'music_db.json')
 STATUS_FILE = os.path.join(MUSIC_ROOT_DIR, 'analysis_status.json')
 FLAG_FILE = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
 TARGET_LUFS = -14.0 
+FORCE_REANALYZE = '--force' in sys.argv
 
 CAMELOT_MAP = {
     'C': '8B', 'G': '9B', 'D': '10B', 'A': '11B', 'E': '12B', 'B': '1B', 
@@ -46,6 +47,37 @@ def calculate_audio_hash(file_path):
     except Exception as e:
         print(f"[Worker] Errore calcolo hash per {file_path}: {e}")
         return None
+
+def delete_rmusic_tags(file_path):
+    try:
+        try:
+            audio = ID3(file_path)
+        except Exception:
+            return
+            
+        changed = False
+        to_delete = []
+        
+        # Elimina TBPM e TKEY
+        if 'TBPM' in audio:
+            to_delete.append('TBPM')
+        if 'TKEY' in audio:
+            to_delete.append('TKEY')
+            
+        # Elimina i TXXX creati da noi
+        for tag in audio.getall('TXXX'):
+            if tag.desc and (tag.desc.startswith('RMusic_') or tag.desc.startswith('X-')):
+                to_delete.append(f"TXXX:{tag.desc}")
+                
+        for key in to_delete:
+            if key in audio:
+                audio.delall(key)
+                changed = True
+                
+        if changed:
+            audio.save(file_path, v2_version=3)
+    except Exception as e:
+        print(f"[Worker] Errore cancellazione tag per {file_path}: {e}")
 
 def read_id3_tags(file_path):
     try:
@@ -305,6 +337,13 @@ def _analyze_worker(file_path, return_dict):
         return_dict['success'] = False
 
 def safe_analyze_audio(file_path):
+    if FORCE_REANALYZE:
+        delete_rmusic_tags(file_path)
+    else:
+        cached = read_id3_tags(file_path)
+        if cached:
+            return cached
+
     with multiprocessing.Manager() as manager:
         return_dict = manager.dict()
         p = multiprocessing.Process(target=_analyze_worker, args=(file_path, return_dict))
@@ -364,7 +403,9 @@ def build_database():
     files_needing_analysis = []
     
     for i, (full_path, rel_path) in enumerate(all_files):
-        if rel_path not in db:
+        if FORCE_REANALYZE:
+            files_needing_analysis.append((full_path, rel_path, None))
+        elif rel_path not in db:
             files_needing_analysis.append((full_path, rel_path, None))
 
     total_analysis = len(files_needing_analysis)
@@ -415,8 +456,11 @@ def build_database():
                 with open(DB_FILE, 'w') as f: json.dump(db, f, indent=4)
 
     with open(DB_FILE, 'w') as f: json.dump(db, f, indent=4)
-    update_status(100, "Analisi completata!", eta_seconds=0, is_running=False)
-    print("Analisi completata!")
+    update_status(100, "Avvio verifica volume Mix Lunghi...", eta_seconds=0, is_running=True)
+    import subprocess
+    import sys
+    subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'normalizer.py')])
+    print("Analisi completata! Passaggio al Normalizzatore.")
 
 if __name__ == "__main__":
     try: multiprocessing.set_start_method('spawn', force=True)

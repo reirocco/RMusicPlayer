@@ -70,6 +70,7 @@ MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
 DB_FILE = os.path.join(MUSIC_ROOT_DIR, 'music_db.json')
 STATUS_FILE = os.path.join(MUSIC_ROOT_DIR, 'analysis_status.json')
 ANALYZER_SCRIPT = os.path.join(BASE_DIR, 'analyzer.py')
+NORMALIZER_SCRIPT = os.path.join(BASE_DIR, 'normalizer.py')
 
 if not os.path.exists(MUSIC_ROOT_DIR):
     os.makedirs(MUSIC_ROOT_DIR, exist_ok=True)
@@ -92,7 +93,8 @@ player_state = {
     'is_folder_loop_active': False,
     'current_folder_source': None,
     'is_music_active': False,
-    'next_is_long': False
+    'next_is_long': False,
+    'force_crossfade_now': False
 }
 
 audio_lock = threading.Lock()
@@ -128,15 +130,25 @@ def load_db():
 
 load_db()
 
-def start_analyzer_process():
+def start_analyzer_process(force=False):
     flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
     if os.path.exists(flag_file):
         try: os.remove(flag_file)
         except Exception as e: print(f"[System] Errore rimozione flag file: {e}")
     if os.path.exists(ANALYZER_SCRIPT):
-        subprocess.Popen([sys.executable, ANALYZER_SCRIPT])
+        args = [sys.executable, ANALYZER_SCRIPT]
+        if force: args.append('--force')
+        subprocess.Popen(args)
 
 start_analyzer_process()
+
+def start_normalizer_process():
+    flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
+    if os.path.exists(flag_file):
+        try: os.remove(flag_file)
+        except Exception as e: print(f"[System] Errore rimozione flag file: {e}")
+    if os.path.exists(NORMALIZER_SCRIPT):
+        subprocess.Popen([sys.executable, NORMALIZER_SCRIPT])
 
 def db_reloader():
     last_mtime = 0
@@ -431,11 +443,12 @@ def audio_engine_loop():
                             crossfade_to_next()
                                 
             if player_state['is_playing'] and not player_state['is_paused']:
-                if player_state.get('current_track') is None and player_state.get('next_wav_path'):
+                if (player_state.get('current_track') is None or player_state.get('force_crossfade_now')) and player_state.get('next_wav_path'):
                     if os.path.exists(player_state['next_wav_path']):
                         now = time.time()
                         if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                            print("[Automix] Primo brano asincrono pronto. Avvio riproduzione.")
+                            print("[Automix] Brano asincrono pronto (Force Crossfade). Avvio riproduzione.")
+                            player_state['force_crossfade_now'] = False
                             crossfade_to_next()
                             
                 if player_state.get('is_music_active'):
@@ -521,6 +534,7 @@ def play_folder():
                 try:
                     player_state['next_track_queued'] = first_track
                     player_state['last_crossfade_time'] = 0
+                    player_state['force_crossfade_now'] = True
                     
                     if not is_already_playing:
                         pygame.mixer.stop()
@@ -714,8 +728,16 @@ def admin_reanalyze():
     try:
         music_db = {}
         with open(DB_FILE, 'w') as f: json.dump({}, f)
-        start_analyzer_process()
+        start_analyzer_process(force=True)
         return jsonify({"status": "ok", "message": "Reset DB e Rianalisi Completa avviata."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/admin/normalize_mixes', methods=['POST'])
+def admin_normalize_mixes():
+    try:
+        start_normalizer_process()
+        return jsonify({"status": "ok", "message": "Normalizzazione Mix Lunghi avviata in background."})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

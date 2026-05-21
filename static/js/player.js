@@ -23,6 +23,18 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 });
 
+function triggerNormalizeMixes() {
+    if (confirm("Vuoi normalizzare in modo permanente il volume di tutti i mix lunghi? Questo processo modificherà i file MP3 originali e potrebbe richiedere molto tempo.")) {
+        fetch('/api/admin/normalize_mixes', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                alert(data.message);
+                checkAnalysisStatus();
+            })
+            .catch(err => alert("Errore di rete"));
+    }
+}
+
 function formatTime(seconds) {
     if (seconds === null || seconds === undefined) return "--:--";
     let m = Math.floor(seconds / 60);
