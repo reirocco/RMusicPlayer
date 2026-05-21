@@ -290,19 +290,24 @@ def schedule_preload():
 
             break
             
-        unique_wav = os.path.join(BASE_DIR, f"temp_{uuid.uuid4().hex}.wav")
-        player_state['next_track_queued'] = next_track_path
-        player_state['next_wav_path'] = unique_wav
-        
         track_info = music_db.get(next_track_path, {})
         gain = track_info.get('gain', 0.0)
         peak = track_info.get('peak', 0.0)
         trim_start = track_info.get('trim_start', 0.0)
         trim_end = track_info.get('trim_end', 0.0)
         
-        print(f"[Scheduler] Preload di '{next_track_path}' (Gain: {gain}dB, Peak: {peak}dB)")
-        p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, peak, trim_start, trim_end))
-        p.start()
+        if gain == 0.0 and trim_start == 0.0 and trim_end == 0.0:
+            print(f"[Scheduler] Preload diretto di '{next_track_path}' (nessuna modifica)")
+            player_state['next_track_queued'] = next_track_path
+            player_state['next_wav_path'] = full_mp3_path
+        else:
+            unique_wav = os.path.join(BASE_DIR, f"temp_{uuid.uuid4().hex}.wav")
+            player_state['next_track_queued'] = next_track_path
+            player_state['next_wav_path'] = unique_wav
+            
+            print(f"[Scheduler] Preload di '{next_track_path}' (Gain: {gain}dB, Peak: {peak}dB)")
+            p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, peak, trim_start, trim_end))
+            p.start()
 
 def cleanup_old_wavs():
     current_wav = player_state.get('next_wav_path')
@@ -461,26 +466,30 @@ def play_folder():
                 trim_end = track_info.get('trim_end', 0.0)
                 
                 try:
-                    from pydub import AudioSegment
-                    audio = AudioSegment.from_mp3(full_path)
-                    
-                    start_ms = int(trim_start * 1000) if trim_start > 0 else 0
-                    end_ms = int(trim_end * 1000) if trim_end > 0 else len(audio)
-                    
-                    if start_ms > 0 or end_ms < len(audio):
-                        audio = audio[start_ms:end_ms]
+                    if gain == 0.0 and trim_start == 0.0 and trim_end == 0.0:
+                        player_state['next_track_queued'] = first_track
+                        player_state['next_wav_path'] = full_path
+                    else:
+                        from pydub import AudioSegment
+                        audio = AudioSegment.from_mp3(full_path)
                         
-                    if gain != 0:
-                        if peak != 0.0 and (gain + peak) > 0.0:
-                            safe_gain = -peak
-                            print(f"[System] Gain prima traccia ridotto da {gain}dB a {safe_gain}dB per evitare clipping (Peak: {peak}dBFS)")
-                            gain = safe_gain
-                        audio = audio.apply_gain(gain)
-                    audio.export(tmp_wav, format="wav")
-                    
-                    player_state['next_track_queued'] = first_track
-                    player_state['next_wav_path'] = tmp_wav
-                    
+                        start_ms = int(trim_start * 1000) if trim_start > 0 else 0
+                        end_ms = int(trim_end * 1000) if trim_end > 0 else len(audio)
+                        
+                        if start_ms > 0 or end_ms < len(audio):
+                            audio = audio[start_ms:end_ms]
+                            
+                        if gain != 0:
+                            if peak != 0.0 and (gain + peak) > 0.0:
+                                safe_gain = -peak
+                                print(f"[System] Gain prima traccia ridotto da {gain}dB a {safe_gain}dB per evitare clipping (Peak: {peak}dBFS)")
+                                gain = safe_gain
+                            audio = audio.apply_gain(gain)
+                        audio.export(tmp_wav, format="wav")
+                        
+                        player_state['next_track_queued'] = first_track
+                        player_state['next_wav_path'] = tmp_wav
+                        
                     player_state['last_crossfade_time'] = 0
                     if not is_already_playing:
                         pygame.mixer.stop()
