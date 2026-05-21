@@ -364,24 +364,8 @@ def build_database():
     files_needing_analysis = []
     
     for i, (full_path, rel_path) in enumerate(all_files):
-        if i % 20 == 0: 
-            update_status(int((i / len(all_files)) * 5), f"Verifica integrità: {os.path.basename(full_path)}")
-            
-        current_hash = calculate_audio_hash(full_path)
-        id3_data = read_id3_tags(full_path)
-        
-        needs_analysis = False
-        
-        if not id3_data or 'hash' not in id3_data:
-            needs_analysis = True
-        elif current_hash and current_hash != id3_data['hash']:
-            print(f"[System] File modificato/corrotto (Hash mismatch): {rel_path}")
-            needs_analysis = True
-            
-        if not needs_analysis:
-            db[rel_path] = id3_data
-        else:
-            files_needing_analysis.append((full_path, rel_path, current_hash))
+        if rel_path not in db:
+            files_needing_analysis.append((full_path, rel_path, None))
 
     total_analysis = len(files_needing_analysis)
     
@@ -399,6 +383,9 @@ def build_database():
                 return
 
             start_time = time.time()
+            
+            if current_hash is None:
+                current_hash = calculate_audio_hash(full_path)
             
             avg_time = sum(time_window) / len(time_window) if time_window else 5.0
             eta = int(avg_time * (total_analysis - i))
