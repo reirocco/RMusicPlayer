@@ -11,7 +11,7 @@ import datetime
 import glob
 from collections import deque
 from flask import Flask, render_template, jsonify, request, send_file, abort
-import pygame
+import mpv
 import warnings
 from analyzer import calculate_audio_hash, read_id3_tags
 
@@ -50,20 +50,13 @@ if not isinstance(sys.stdout, LogCapture):
 app = Flask(__name__)
 
 # Configurazione Audio
-pygame.mixer.pre_init(44100, -16, 2, 4096)
-pygame.init()
-pygame.mixer.init()
-pygame.mixer.set_num_channels(8)
+mpv_player_a = mpv.MPV(ytdl=False, video=False)
+mpv_player_b = mpv.MPV(ytdl=False, video=False)
+channels = {0: mpv_player_a, 1: mpv_player_b}
 
 FADE_TIME_MS = 4000
 MIN_DURATION_FOR_CROSSFADE = 10
 DB_RELOAD_INTERVAL_SEC = 5
-
-CHANNEL_END_EVENTS = {
-    0: pygame.USEREVENT + 0,
-    1: pygame.USEREVENT + 1
-}
-MUSIC_END_EVENT = pygame.USEREVENT + 2
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MUSIC_ROOT_DIR = os.path.join(os.path.expanduser("~"), 'RMusicPlayer')
@@ -81,7 +74,6 @@ music_db = {}
 player_state = {
     'current_track': None, 
     'next_track_queued': None, 
-    'next_wav_path': None,
     'folder': None, 
     'is_playing': False, 
     'is_paused': False, 
@@ -90,11 +82,9 @@ player_state = {
     'explicit_queue': [],
     'active_channel_id': 0,
     'last_crossfade_time': 0.0,
+    'crossfade_id': 0,
     'is_folder_loop_active': False,
     'current_folder_source': None,
-    'is_music_active': False,
-    'next_is_long': False,
-    'force_crossfade_now': False
 }
 
 audio_lock = threading.Lock()
@@ -109,16 +99,7 @@ def validate_path(base_dir, relative_path):
         raise PermissionError("Accesso negato")
     return target_path
 
-def clean_startup_temps():
-    temps = glob.glob(os.path.join(BASE_DIR, "temp_*.wav")) + \
-            glob.glob(os.path.join(BASE_DIR, "temp_*.tmp"))
-    if temps:
-        print(f"[System] Pulizia di {len(temps)} file temporanei orfani...")
-        for f in temps:
-            try: os.remove(f)
-            except Exception as e: print(f"[System] Impossibile rimuovere temp file: {e}")
 
-clean_startup_temps()
 
 def load_db():
     global music_db
@@ -263,76 +244,20 @@ def pop_next_track():
 
     return None
 
-def preload_worker(mp3_path, wav_output_path, gain_db=0.0, peak_db=0.0, trim_start=0.0, trim_end=0.0):
-    try:
-        if sys.platform != "win32": os.nice(19)
-        from pydub import AudioSegment
-        audio = AudioSegment.from_mp3(mp3_path)
-        
-        start_ms = int(trim_start * 1000) if trim_start > 0 else 0
-        end_ms = int(trim_end * 1000) if trim_end > 0 else len(audio)
-        
-        if start_ms > 0 or end_ms < len(audio):
-            audio = audio[start_ms:end_ms]
-            
-        if gain_db != 0.0:
-            if peak_db != 0.0 and (gain_db + peak_db) > 0.0:
-                safe_gain = -peak_db
-                print(f"[Worker] Gain ridotto da {gain_db}dB a {safe_gain}dB per evitare clipping (Peak: {peak_db}dBFS)")
-                gain_db = safe_gain
-            audio = audio.apply_gain(gain_db)
-            
-        tmp_path = wav_output_path + ".tmp"
-        audio.export(tmp_path, format="wav")
-        os.rename(tmp_path, wav_output_path)
-    except Exception as e:
-        print(f"[Worker] Errore: {e}")
+
 
 def schedule_preload():
     with audio_lock:
         if not player_state['playlist'] and not player_state['queue'] and not player_state['explicit_queue']: return
-        if player_state['next_track_queued'] and player_state['next_wav_path']: return
+        if player_state.get('next_track_queued'): return
 
-        next_track_path = None
-        while True:
-            next_track_path = pop_next_track()
-            if not next_track_path:
-                return 
+        next_track_path = pop_next_track()
+        if not next_track_path: return
 
-            full_mp3_path = os.path.join(MUSIC_ROOT_DIR, next_track_path)
-            if not os.path.exists(full_mp3_path):
-                continue
+        player_state['next_track_queued'] = next_track_path
+        print(f"[Scheduler] Prossima traccia in coda: '{next_track_path}'")
 
-            break
-            
-        track_info = music_db.get(next_track_path, {})
-        duration = track_info.get('duration', 0.0)
-        gain = track_info.get('gain', 0.0)
-        peak = track_info.get('peak', 0.0)
-        trim_start = track_info.get('trim_start', 0.0)
-        trim_end = track_info.get('trim_end', 0.0)
-        
-        if duration >= 300.0:
-            player_state['next_track_queued'] = next_track_path
-            player_state['next_wav_path'] = full_mp3_path
-            player_state['next_is_long'] = True
-            print(f"[Scheduler] Preload diretto (STREAMING) di '{next_track_path}'")
-        else:
-            unique_wav = os.path.join(BASE_DIR, f"temp_{uuid.uuid4().hex}.wav")
-            player_state['next_track_queued'] = next_track_path
-            player_state['next_wav_path'] = unique_wav
-            player_state['next_is_long'] = False
-            print(f"[Scheduler] Preload asincrono di '{next_track_path}' (Gain: {gain}dB, Peak: {peak}dB)")
-            p = multiprocessing.Process(target=preload_worker, args=(full_mp3_path, unique_wav, gain, peak, trim_start, trim_end))
-            p.start()
 
-def cleanup_old_wavs():
-    current_wav = player_state.get('next_wav_path')
-    for f in glob.glob(os.path.join(BASE_DIR, "temp_*.wav")):
-        if current_wav and os.path.abspath(f) == os.path.abspath(current_wav):
-            continue
-        try: os.remove(f)
-        except Exception as e: print(f"[System] Impossibile pulire wav: {e}")
 
 def crossfade_to_next():
     global player_state
@@ -342,136 +267,101 @@ def crossfade_to_next():
     current_idx = player_state['active_channel_id']
     next_idx = 1 - current_idx 
     
-    current_channel = pygame.mixer.Channel(current_idx)
-    next_channel = pygame.mixer.Channel(next_idx)
+    current_channel = channels[current_idx]
+    next_channel = channels[next_idx]
 
     next_path = player_state.get('next_track_queued')
-    wav_path = player_state.get('next_wav_path')
-
-    if not next_path or not wav_path:
-        print("[Automix] Coda di preload vuota. Riprogrammo.")
+    if not next_path:
         schedule_preload()
         return
 
-    if not os.path.exists(wav_path):
-        print(f"[Automix] Attendendo che il WAV di '{next_path}' sia pronto...")
-        wait_start = time.time()
-        while not os.path.exists(wav_path):
-            if time.time() - wait_start > 120:
-                print("[Automix] Timeout! Il WAV non è stato generato in tempo.")
-                return
-            time.sleep(0.1)
-        print(f"[Automix] WAV pronto dopo {time.time() - wait_start:.1f}s.")
-
-    if player_state.get('next_is_long', False):
-        try:
-            pygame.mixer.music.load(wav_path)
-            track_info = music_db.get(next_path, {})
-            gain = track_info.get('gain', 0.0)
-            vol = 1.0
-            if gain != 0.0:
-                vol = 10 ** (gain / 20.0)
-                vol = max(0.0, min(1.0, vol))
-            pygame.mixer.music.set_volume(vol)
-            sound_duration_sec = track_info.get('duration', 300.0)
-            fade_ms = FADE_TIME_MS
-            pygame.mixer.music.play(fade_ms=fade_ms)
-            pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
-            
-            print(f"[Automix] Streaming istantaneo verso '{next_path}' (Dur: {sound_duration_sec:.1f}s, Vol: {vol:.2f})")
-            
-            if current_channel.get_busy():
-                current_channel.fadeout(fade_ms)
-            
-            player_state['is_music_active'] = True
-        except Exception as e:
-            print(f"[Automix] Errore avvio streaming musicale: {e}")
-            return
+    full_mp3_path = os.path.join(MUSIC_ROOT_DIR, next_path)
+    track_info = music_db.get(next_path, {})
+    duration = track_info.get('duration', 0.0)
+    trim_end = track_info.get('trim_end', duration)
+    if trim_end <= 0.1: trim_end = duration
+    
+    gain = track_info.get('gain', 0.0)
+    trim_start = track_info.get('trim_start', 0.0)
+    
+    fade_sec = FADE_TIME_MS / 1000.0 if duration > MIN_DURATION_FOR_CROSSFADE else 0.5
+    
+    print(f"[Automix] Crossfade verso '{next_path}' (Dur: {duration:.1f}s, Gain: {gain}dB)")
+    
+    if gain != 0.0:
+        next_channel.command('set', 'options/af', f'volume={gain}dB')
     else:
-        try:
-            next_sound = pygame.mixer.Sound(wav_path)
-        except Exception as e:
-            print(f"[Automix] Errore caricamento WAV: {e}")
-            return
-
-        sound_duration_sec = next_sound.get_length()
-        fade_ms = FADE_TIME_MS if sound_duration_sec > MIN_DURATION_FOR_CROSSFADE else 500
-
-        print(f"[Automix] Crossfade verso '{next_path}' (Dur: {sound_duration_sec:.1f}s)")
-
-        next_channel.set_endevent(CHANNEL_END_EVENTS[next_idx])
-        next_channel.set_volume(1.0)
-        next_channel.play(next_sound, fade_ms=fade_ms)
+        next_channel.command('set', 'options/af', 'volume=0dB')
         
-        if current_channel.get_busy():
-            current_channel.fadeout(fade_ms)
-        if player_state.get('is_music_active'):
-            pygame.mixer.music.fadeout(fade_ms)
+    next_channel.play(full_mp3_path)
+    if trim_start > 0:
+        next_channel.time_pos = trim_start
+        
+    player_state['crossfade_id'] += 1
+    current_cf_id = player_state['crossfade_id']
+
+    def fade_in_out(curr, nxt, duration_sec, cf_id):
+        steps = 20
+        sleep_time = duration_sec / steps
+        for i in range(steps):
+            if player_state.get('crossfade_id') != cf_id:
+                return # Stop thread if a new crossfade started
+            vol_out = max(0, 100 - int((i / steps) * 100))
+            vol_in = min(100, int((i / steps) * 100))
+            try:
+                curr.volume = vol_out
+                nxt.volume = vol_in
+            except: pass
+            time.sleep(sleep_time)
             
-        player_state['is_music_active'] = False
+        if player_state.get('crossfade_id') == cf_id:
+            try:
+                curr.stop()
+                curr.volume = 100
+            except: pass
+
+    threading.Thread(target=fade_in_out, args=(current_channel, next_channel, fade_sec, current_cf_id), daemon=True).start()
     
     player_state['current_track'] = next_path
     player_state['active_channel_id'] = next_idx
     player_state['next_track_queued'] = None
-    player_state['next_wav_path'] = None
     player_state['last_crossfade_time'] = now
-    
-    player_state['current_duration_sec'] = sound_duration_sec
-    player_state['track_pos_sec'] = 0.0
+    player_state['current_duration_sec'] = trim_end
     player_state['last_play_resume_time'] = now
     
-    threading.Thread(target=cleanup_old_wavs).start()
     threading.Thread(target=schedule_preload, daemon=True).start()
 
 def audio_engine_loop():
     while True:
         try:
-            for event in pygame.event.get():
-                if event.type in CHANNEL_END_EVENTS.values():
-                    channel_id = event.type - pygame.USEREVENT
-                    if channel_id == player_state['active_channel_id'] and not player_state.get('is_music_active'):
-                        if player_state['is_playing']:
-                            now = time.time()
-                            if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                                print("[Automix] Richiesto passaggio al brano successivo (Skip o Fine brano - Channel).")
-                                crossfade_to_next()
-                elif event.type == MUSIC_END_EVENT:
-                    if player_state.get('is_music_active') and player_state['is_playing']:
-                        now = time.time()
-                        if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                            print("[Automix] Richiesto passaggio al brano successivo (Skip o Fine brano - Music).")
-                            crossfade_to_next()
-                                
             if player_state['is_playing'] and not player_state['is_paused']:
-                if (player_state.get('current_track') is None or player_state.get('force_crossfade_now')) and player_state.get('next_wav_path'):
-                    if os.path.exists(player_state['next_wav_path']):
+                current_channel = channels[player_state['active_channel_id']]
+                
+                # Check MPV properties
+                if current_channel.time_pos is not None:
+                    pos_sec = current_channel.time_pos
+                    dur_sec = player_state.get('current_duration_sec', 0.0)
+                    fade_sec = FADE_TIME_MS / 1000.0
+                    
+                    if dur_sec > fade_sec and pos_sec >= (dur_sec - fade_sec):
                         now = time.time()
                         if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                            print("[Automix] Brano asincrono pronto (Force Crossfade). Avvio riproduzione.")
-                            player_state['force_crossfade_now'] = False
+                            player_state['last_crossfade_time'] = now # Prevent instant retry
+                            print(f"[Automix] Raggiunto punto di crossfade ({pos_sec:.1f}s / {dur_sec:.1f}s).")
                             crossfade_to_next()
-                            
-                if player_state.get('is_music_active'):
-                    pos_sec = pygame.mixer.music.get_pos() / 1000.0
-                    if pos_sec < 0: pos_sec = 0.0
-                else:
-                    pos_sec = player_state.get('track_pos_sec', 0.0) + (time.time() - player_state.get('last_play_resume_time', time.time()))
                 
-                dur_sec = player_state.get('current_duration_sec', 0.0)
-                
-                fade_sec = FADE_TIME_MS / 1000.0
-                if dur_sec > fade_sec and pos_sec >= (dur_sec - fade_sec):
+                # Fallback se ha smesso di suonare improvvisamente
+                if getattr(current_channel, 'eof_reached', False) or getattr(current_channel, 'core_idle', False):
                     now = time.time()
                     if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                        print(f"[Automix] Raggiunto punto di crossfade ({pos_sec:.1f}s / {dur_sec:.1f}s).")
+                        player_state['last_crossfade_time'] = now # Prevent instant retry
                         crossfade_to_next()
-                        
-            if player_state['is_playing'] and not player_state['next_track_queued']:
+
+            if player_state['is_playing'] and not player_state.get('next_track_queued'):
                 schedule_preload()
                 
         except Exception as e:
-            print(f"Errore engine audio: {e}")
-            
+            pass
         time.sleep(0.1)
 
 threading.Thread(target=audio_engine_loop, daemon=True).start()
@@ -516,13 +406,13 @@ def play_folder():
             player_state['is_paused'] = False
 
             player_state['next_track_queued'] = None
-            player_state['next_wav_path'] = None
+            
             
             first_track = pop_next_track()
                 
             if first_track:
                 full_path = os.path.join(MUSIC_ROOT_DIR, first_track)
-                tmp_wav = os.path.join(BASE_DIR, f"temp_first_{uuid.uuid4().hex}.wav")
+                
                 
                 track_info = music_db.get(first_track, {})
                 duration = track_info.get('duration', 0.0)
@@ -534,21 +424,13 @@ def play_folder():
                 try:
                     player_state['next_track_queued'] = first_track
                     player_state['last_crossfade_time'] = 0
-                    player_state['force_crossfade_now'] = True
+                    
                     
                     if not is_already_playing:
-                        pygame.mixer.stop()
+                        channels[player_state['active_channel_id']].stop()
                     
-                    if duration >= 300.0:
-                        player_state['next_wav_path'] = full_path
-                        player_state['next_is_long'] = True
-                        print(f"[Automix] Avvio diretto (STREAMING) prima traccia: {first_track}")
-                    else:
-                        player_state['next_wav_path'] = tmp_wav
-                        player_state['next_is_long'] = False
-                        print(f"[Automix] Avvio elaborazione asincrona prima traccia: {first_track}")
-                        p = multiprocessing.Process(target=preload_worker, args=(full_path, tmp_wav, gain, peak, trim_start, trim_end))
-                        p.start()
+                    print(f"[Automix] Avvio prima traccia: {first_track}")
+                    crossfade_to_next()
                     
                 except Exception as e:
                     return jsonify({"status": "error", "message": f"Errore audio: {str(e)}"}), 500
@@ -591,11 +473,10 @@ def add_to_queue():
                 rel_path = os.path.relpath(target_dir, MUSIC_ROOT_DIR).replace('\\', '/')
                 player_state['explicit_queue'].append(rel_path)
                 
-            if not player_state['is_playing'] and not pygame.mixer.get_busy():
+            if not player_state['is_playing']:
                 player_state['is_playing'] = True
                 player_state['is_paused'] = False
-                end_event_id = CHANNEL_END_EVENTS[player_state['active_channel_id']]
-                pygame.event.post(pygame.event.Event(end_event_id))
+                crossfade_to_next()
             else:
                 old_preloaded = player_state.get('next_track_queued')
                 if old_preloaded:
@@ -603,7 +484,7 @@ def add_to_queue():
                         player_state['queue'].insert(0, old_preloaded)
                     
                 player_state['next_track_queued'] = None
-                player_state['next_wav_path'] = None
+                
                 threading.Thread(target=schedule_preload, daemon=True).start()
                 
         return jsonify({"status": "ok"})
@@ -661,11 +542,7 @@ def api_folders(subpath):
 @app.route('/api/next_track', methods=['POST'])
 def next_track():
     if player_state['is_playing']:
-        if player_state.get('is_music_active'):
-            pygame.event.post(pygame.event.Event(MUSIC_END_EVENT))
-        else:
-            end_event_id = CHANNEL_END_EVENTS[player_state['active_channel_id']]
-            pygame.event.post(pygame.event.Event(end_event_id))
+        crossfade_to_next()
         return jsonify({"status": "fading"})
     return jsonify({"status": "stopped"})
 
@@ -708,17 +585,22 @@ def status():
     
     preloaded_count = 1 if player_state.get('next_track_queued') else 0
     
-    pos = player_state.get('track_pos_sec', 0.0)
     if player_state.get('is_playing') and not player_state.get('is_paused'):
-        pos += time.time() - player_state.get('last_play_resume_time', time.time())
+        curr = channels[player_state['active_channel_id']]
+        if curr.time_pos is not None:
+            pos = curr.time_pos
+        else:
+            pos = 0.0
+    else:
+        pos = player_state.get('track_pos_sec', 0.0)
         
     safe_state.update({
         'bpm': info.get('bpm'), 'key': info.get('key'),
         'camelot': info.get('camelot'), 'cue_point': info.get('cue_point'),
         'energy': info.get('energy'),
         'queue_count': len(player_state['queue']) + len(player_state['explicit_queue']) + preloaded_count,
-        'duration': player_state.get('current_duration_sec', 0.0),
-        'position': pos
+        'duration': info.get('effective_duration', player_state.get('current_duration_sec', 0.0)),
+        'position': max(0.0, pos - info.get('trim_start', 0.0))
     })
     return jsonify(safe_state)
 
@@ -803,17 +685,12 @@ def analysis_status():
 @app.route('/api/toggle_playback', methods=['POST'])
 def toggle_playback():
     if player_state['is_paused']:
-        pygame.mixer.unpause()
-        if player_state.get('is_music_active'):
-            pygame.mixer.music.unpause()
+        channels[player_state['active_channel_id']].pause = False
         player_state['last_play_resume_time'] = time.time()
     else:
-        pygame.mixer.pause()
-        if player_state.get('is_music_active'):
-            pygame.mixer.music.pause()
+        channels[player_state['active_channel_id']].pause = True
         elapsed = time.time() - player_state.get('last_play_resume_time', time.time())
-        if not player_state.get('is_music_active'):
-            player_state['track_pos_sec'] = player_state.get('track_pos_sec', 0.0) + elapsed
+        player_state['track_pos_sec'] = player_state.get('track_pos_sec', 0.0) + elapsed
     player_state['is_paused'] = not player_state['is_paused']
     return jsonify({"status": "ok"})
 
@@ -826,6 +703,5 @@ def page_not_found(e):
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    try: from pydub import AudioSegment
-    except ImportError: sys.exit(1)
+    
     app.run(host='0.0.0.0', port=5000, threaded=True)

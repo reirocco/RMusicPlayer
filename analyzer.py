@@ -209,39 +209,16 @@ def _analyze_worker(file_path, return_dict):
             return_dict['success'] = True
             return
 
-        import librosa
-        import numpy as np
-        from pydub import AudioSegment
-        warnings.filterwarnings('ignore')
-        
-        # --- 0. DURATION & SILENCE DETECT (Pydub) ---
-        try:
-            from pydub.silence import detect_nonsilent
-            audio = AudioSegment.from_file(file_path)
-            
-            nonsilent_ranges = detect_nonsilent(audio, min_silence_len=500, silence_thresh=-50)
-            if nonsilent_ranges:
-                trim_start_ms = nonsilent_ranges[0][0]
-                trim_end_ms = nonsilent_ranges[-1][1]
-            else:
-                trim_start_ms = 0
-                trim_end_ms = len(audio)
-                
-            trim_start_sec = trim_start_ms / 1000.0
-            trim_end_sec = trim_end_ms / 1000.0
-            effective_duration = (trim_end_ms - trim_start_ms) / 1000.0
-            duration_sec = len(audio) / 1000.0
-            
-        except Exception:
-            duration_sec = 0.0
-            trim_start_sec = 0.0
-            trim_end_sec = 0.0
-            effective_duration = 0.0
+        # --- 0. DURATION (Mutagen) ---
+        # duration_sec is already calculated by Mutagen above
+        trim_start_sec = 0.0
+        trim_end_sec = duration_sec
+        effective_duration = duration_sec
 
-        # --- 0.5 EBU R128 LOUDNESS NORMALIZATION ---
+        # --- 0.5 EBU R128 LOUDNESS NORMALIZATION & SILENCE DETECT (FFmpeg) ---
         try:
             import subprocess, re
-            cmd = ['ffmpeg', '-nostats', '-i', file_path, '-filter_complex', 'ebur128=peak=true', '-f', 'null', '-']
+            cmd = ['ffmpeg', '-nostats', '-i', file_path, '-filter_complex', '[0:a]silencedetect=noise=-50dB:d=0.5[a];[a]ebur128=peak=true', '-f', 'null', '-']
             output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
             
             i_matches = re.findall(r'I:\s+([-\d\.]+)\s+LUFS', output)
@@ -254,69 +231,104 @@ def _analyze_worker(file_path, return_dict):
             else:
                 gain = 0.0
                 peak = 0.0
+                
+            silence_starts = re.findall(r'silence_start:\s+([-\d\.]+)', output)
+            silence_ends = re.findall(r'silence_end:\s+([-\d\.]+)', output)
+            
+            if silence_starts and silence_ends and float(silence_starts[0]) <= 0.1:
+                trim_start_sec = float(silence_ends[0])
+                
+            if silence_starts:
+                last_start = float(silence_starts[-1])
+                if duration_sec > 0 and (duration_sec - last_start) < 15.0:
+                    trim_end_sec = last_start
+                    
+            effective_duration = trim_end_sec - trim_start_sec
+            
         except Exception as e:
-            print(f"   [Worker] Errore EBU R128: {e}")
+            print(f"   [Worker] Errore FFmpeg: {e}")
             gain = 0.0
             peak = 0.0
 
-        # --- 1. Librosa Load (Primi 60s per BPM/Key/Energy) ---
+        # --- 1. Aubio Source (Primi 60s per BPM/Key/Energy) ---
+        import numpy as np
+        import aubio
+        
+        sr = 44100
+        win_s = 512
+        hop_s = win_s // 2
+        
         try:
-            # Carichiamo l'audio. SR=22050 è standard per l'analisi veloce.
-            y, sr = librosa.load(file_path, duration=60, sr=22050)
+            s = aubio.source(file_path, sr, hop_s)
         except Exception as e:
+            print(f"   [Worker] Errore aubio.source: {e}")
             return_dict['success'] = False
             return
-
-        if not np.isfinite(y).all(): y = np.nan_to_num(y)
-        if len(y) == 0:
+            
+        tempo_o = aubio.tempo("default", win_s, hop_s, sr)
+        pitch_o = aubio.pitch("yin", win_s, hop_s, sr)
+        pitch_o.set_unit("midi")
+        pitch_o.set_tolerance(0.8)
+        
+        beats = []
+        pitches = []
+        sum_rms = 0.0
+        total_frames = 0
+        
+        max_blocks = int((60.0 * sr) / hop_s)
+        blocks_read = 0
+        
+        while True:
+            samples, read = s()
+            if read < hop_s:
+                samples = np.pad(samples, (0, hop_s - read), mode='constant')
+                
+            if tempo_o(samples):
+                beats.append(tempo_o.get_last_s())
+                
+            pitch = pitch_o(samples)[0]
+            if pitch > 0:
+                pitches.append(pitch)
+                
+            sum_rms += np.sum(samples ** 2)
+            total_frames += read
+            blocks_read += 1
+            
+            if blocks_read >= max_blocks or read < hop_s:
+                break
+                
+        if total_frames == 0:
             return_dict['success'] = False
             return
 
         # --- 2. SMART CUE POINT (Beat Detection) ---
-        # Cerchiamo il primo "onset" (attacco) significativo.
-        # backtrack=True aiuta a trovare l'inizio preciso del transiente.
-        onset_frames = librosa.onset.onset_detect(y=y, sr=sr, backtrack=True, units='frames')
-        
-        if len(onset_frames) > 0:
-            # Prendiamo il primo onset rilevato
-            first_onset_frame = onset_frames[0]
-            cue_point = float(librosa.frames_to_time(first_onset_frame, sr=sr))
-            
-            # Se il cue point è troppo avanti (es. > 15s), forse è un errore o un'intro lunga.
-            # In tal caso, torniamo al vecchio metodo "Trim Silenzio" come fallback.
-            if cue_point > 15.0:
-                y_trimmed, index = librosa.effects.trim(y, top_db=30) # 30dB soglia più aggressiva
-                cue_point = float(librosa.samples_to_time(index[0], sr=sr))
-        else:
-            # Fallback se non trova beat
-            y_trimmed, index = librosa.effects.trim(y, top_db=25)
-            cue_point = float(librosa.samples_to_time(index[0], sr=sr))
-        
-        # Applichiamo un piccolissimo margine di sicurezza (-50ms) per non tagliare l'attacco
+        cue_point = beats[0] if beats else 0.0
+        if cue_point > 15.0:
+            cue_point = 0.0
         cue_point = max(0.0, cue_point - 0.05)
 
         # --- 3. BPM ---
-        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-        if not np.isfinite(onset_env).all(): onset_env = np.nan_to_num(onset_env)
-
-        try:
-            # start_bpm=120 aiuta l'algoritmo a convergere su tempi dance
-            tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, start_bpm=120)
-            bpm = float(tempo[0] if isinstance(tempo, np.ndarray) else tempo)
-        except Exception:
-            bpm = 120.0 
+        if len(beats) > 1:
+            intervals = np.diff(beats)
+            median_interval = np.median(intervals)
+            bpm = 60.0 / median_interval if median_interval > 0 else 120.0
+        else:
+            bpm = tempo_o.get_bpm()
+            if bpm == 0: bpm = 120.0
 
         # --- 4. KEY ---
-        chroma = librosa.feature.chroma_stft(y=y, sr=sr)
-        if not np.isfinite(chroma).all(): chroma = np.nan_to_num(chroma)
-             
-        key_idx = np.argmax(np.sum(chroma, axis=1))
-        key = KEYS[key_idx]
+        if pitches:
+            pitch_classes = [int(round(p)) % 12 for p in pitches]
+            counts = np.bincount(pitch_classes)
+            key_idx = np.argmax(counts)
+            key = KEYS[key_idx]
+        else:
+            key = 'C'
+            
         camelot = CAMELOT_MAP.get(key, "N/A")
 
         # --- 5. ENERGY LEVEL ---
-        rms = librosa.feature.rms(y=y)
-        mean_rms = np.mean(rms)
+        mean_rms = np.sqrt(sum_rms / total_frames) if total_frames > 0 else 0
         energy = int(np.clip((mean_rms - 0.02) / (0.25 - 0.02) * 9 + 1, 1, 10))
 
         return_dict['bpm'] = round(bpm, 1)

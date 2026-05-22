@@ -7,6 +7,11 @@ let hasFilesHere = false;
 let analysisRunning = true;
 let logInterval = null;
 
+let localTrackPos = 0;
+let localTrackDur = 0;
+let localIsPlaying = false;
+let localLastSyncTime = Date.now();
+
 function encodePath(path) {
     if (!path) return "";
     return path.split('/').map(encodeURIComponent).join('/');
@@ -373,13 +378,7 @@ function updateServerStatus() {
                     }
                 }
 
-                let dur = data.duration || 0;
-                let pos = data.position || 0;
-                let pct = dur > 0 ? Math.min(100, Math.max(0, (pos / dur) * 100)) : 0;
-                
-                document.getElementById('deck-progress').style.width = pct + "%";
-                document.getElementById('deck-time-pos').innerText = formatDuration(pos);
-                document.getElementById('deck-time-left').innerText = "-" + formatDuration(dur - pos);
+                localIsPlaying = !data.is_paused;
 
             } else {
                 statusText.innerText = "Standby";
@@ -388,9 +387,9 @@ function updateServerStatus() {
                 if(queueBtn) queueBtn.disabled = true;
                 if(queueBadge) queueBadge.style.display = 'none';
                 
-                document.getElementById('deck-progress').style.width = "0%";
-                document.getElementById('deck-time-pos').innerText = "0:00";
-                document.getElementById('deck-time-left').innerText = "-0:00";
+                localIsPlaying = false;
+                localTrackDur = 0;
+                localTrackPos = 0;
             }
         })
         .catch(() => {});
@@ -514,8 +513,7 @@ function triggerReanalyze() {
     fetch('/api/admin/reanalyze', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
-            analysisRunning = true;
-            checkAnalysisStatus(); // Avvia il polling
+            window.location.reload();
         });
 }
 
@@ -529,8 +527,7 @@ function triggerScanNew() {
     fetch('/api/admin/scan_new', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
-            analysisRunning = true;
-            checkAnalysisStatus(); // Avvia il polling
+            window.location.reload();
         });
 }
 
