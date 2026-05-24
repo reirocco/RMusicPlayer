@@ -17,37 +17,21 @@ from analyzer import calculate_audio_hash, read_id3_tags
 
 warnings.filterwarnings('ignore')
 
-# --- LOGGING SYSTEM ---
-class LogCapture:
-    def __init__(self, original_stream):
-        self.original_stream = original_stream
-        self.buffer = deque(maxlen=500) 
-
-    def write(self, message):
-        try:
-            self.original_stream.write(message)
-            self.original_stream.flush()
-            if message.strip(): 
-                timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                self.buffer.append(f"[{timestamp}] {message.strip()}")
-        except Exception:
-            pass
-
-    def flush(self):
-        try:
-            self.original_stream.flush()
-        except: pass
-
-    def get_logs(self):
-        return list(self.buffer)
-    
-    def __getattr__(self, name):
-        return getattr(self.original_stream, name)
-
-if not isinstance(sys.stdout, LogCapture):
-    sys.stdout = LogCapture(sys.stdout)
+from logger_config import core_logger, flask_logger, memory_handler
 
 app = Flask(__name__)
+
+import logging
+log = logging.getLogger('werkzeug')
+log.disabled = True
+app.logger.handlers = flask_logger.handlers
+app.logger.setLevel(flask_logger.level)
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    flask_logger.exception(f"Unhandled Exception: {e}")
+    return jsonify(error=str(e)), 500
+
 
 # Configurazione Audio
 mpv_player_a = mpv.MPV(ytdl=False, video=False)
@@ -95,7 +79,7 @@ def validate_path(base_dir, relative_path):
     safe_base = os.path.abspath(base_dir)
     target_path = os.path.abspath(os.path.join(base_dir, relative_path))
     if not target_path.startswith(safe_base):
-        print(f"[SECURITY] Path Traversal blocked: {relative_path}")
+        core_logger.info(f"[SECURITY] Path Traversal blocked: {relative_path}")
         raise PermissionError("Accesso negato")
     return target_path
 
@@ -107,7 +91,7 @@ def load_db():
         try:
             with open(DB_FILE, 'r') as f: music_db = json.load(f)
         except json.JSONDecodeError as e:
-            print(f"[System] Errore caricamento JSON db: {e}")
+            core_logger.error(f"[System] Errore caricamento JSON db: {e}")
 
 load_db()
 
@@ -115,7 +99,7 @@ def start_analyzer_process(force=False):
     flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
     if os.path.exists(flag_file):
         try: os.remove(flag_file)
-        except Exception as e: print(f"[System] Errore rimozione flag file: {e}")
+        except Exception as e: core_logger.error(f"[System] Errore rimozione flag file: {e}")
     if os.path.exists(ANALYZER_SCRIPT):
         args = [sys.executable, ANALYZER_SCRIPT]
         if force: args.append('--force')
@@ -127,7 +111,7 @@ def start_normalizer_process():
     flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
     if os.path.exists(flag_file):
         try: os.remove(flag_file)
-        except Exception as e: print(f"[System] Errore rimozione flag file: {e}")
+        except Exception as e: core_logger.error(f"[System] Errore rimozione flag file: {e}")
     if os.path.exists(NORMALIZER_SCRIPT):
         subprocess.Popen([sys.executable, NORMALIZER_SCRIPT])
 
@@ -141,7 +125,7 @@ def db_reloader():
                     load_db()
                     last_mtime = mtime
             except Exception as e:
-                print(f"[System] Errore in db_reloader: {e}")
+                core_logger.error(f"[System] Errore in db_reloader: {e}")
         time.sleep(DB_RELOAD_INTERVAL_SEC)
 
 threading.Thread(target=db_reloader, daemon=True).start()
@@ -225,7 +209,7 @@ def refresh_queue_with_automix():
     if files:
         random.shuffle(files)
         with audio_lock:
-            print(f"[Automix] Loop Cartella: accodati {len(files)} brani casuali dalla sorgente '{folder}'.")
+            core_logger.info(f"[Automix] Loop Cartella: accodati {len(files)} brani casuali dalla sorgente '{folder}'.")
             player_state['queue'].extend(files)
 
 def pop_next_track():
@@ -243,14 +227,14 @@ def pop_next_track():
         return track
         
     if player_state.get('is_folder_loop_active'):
-        print("[Automix] Coda vuota ma Loop attivo. Ricarico sincrono...")
+        core_logger.info("[Automix] Coda vuota ma Loop attivo. Ricarico sincrono...")
         refresh_queue_with_automix()
         if player_state['queue']:
             player_state['next_track_source'] = 'automix'
             return player_state['queue'].pop(0)
             
     if player_state['playlist']:
-        print("[Automix] Coda vuota (Loop inattivo). Ricarico e mescolo la playlist originale.")
+        core_logger.info("[Automix] Coda vuota (Loop inattivo). Ricarico e mescolo la playlist originale.")
         start_t = player_state['current_track'] or player_state['playlist'][0]
         player_state['queue'] = sort_pool_automix(start_t, player_state['playlist'])
         if player_state['queue']:
@@ -271,14 +255,17 @@ def schedule_preload():
         if not next_track_path: return
 
         player_state['next_track_queued'] = next_track_path
-        print(f"[Scheduler] Prossima traccia in coda: '{next_track_path}'")
+        core_logger.info(f"[Scheduler] Prossima traccia in coda: '{next_track_path}'")
 
 
 
 def crossfade_to_next():
     global player_state
     now = time.time()
-    if now - player_state.get('last_crossfade_time', 0) < 2.0: return
+    core_logger.debug(f"\n--- CROSSFADE START ({now}) ---")
+    if now - player_state.get('last_crossfade_time', 0) < 2.0: 
+        core_logger.debug(f"Debounce: < 2.0s since last crossfade.")
+        return
     
     current_idx = player_state['active_channel_id']
     next_idx = 1 - current_idx 
@@ -287,7 +274,10 @@ def crossfade_to_next():
     next_channel = channels[next_idx]
 
     next_path = player_state.get('next_track_queued')
+    core_logger.debug(f"next_track_queued is: {next_path}")
     if not next_path:
+        core_logger.debug(f"next_path is None, scheduling preload and returning.")
+        player_state['last_crossfade_time'] = now
         schedule_preload()
         return
 
@@ -295,14 +285,19 @@ def crossfade_to_next():
     track_info = music_db.get(next_path, {})
     duration = track_info.get('duration', 0.0)
     trim_end = track_info.get('trim_end', duration)
-    if trim_end <= 0.1: trim_end = duration
+    if trim_end <= 0.1:
+        try:
+            from mutagen.mp3 import MP3
+            trim_end = MP3(full_mp3_path).info.length
+        except:
+            trim_end = duration if duration > 0 else 300.0
     
     gain = track_info.get('gain', 0.0)
     trim_start = track_info.get('trim_start', 0.0)
     
     fade_sec = FADE_TIME_MS / 1000.0 if duration > MIN_DURATION_FOR_CROSSFADE else 0.5
     
-    print(f"[Automix] Crossfade verso '{next_path}' (Dur: {duration:.1f}s, Gain: {gain}dB)")
+    core_logger.info(f"[Automix] Crossfade verso '{next_path}' (Dur: {duration:.1f}s, Gain: {gain}dB)")
     
     if gain != 0.0:
         next_channel.command('set', 'options/af', f'volume={gain}dB')
@@ -310,8 +305,10 @@ def crossfade_to_next():
         next_channel.command('set', 'options/af', 'volume=0dB')
         
     try:
+        core_logger.debug(f"Calling next_channel.play({full_mp3_path})")
         next_channel.pause = False
         next_channel.play(full_mp3_path)
+        core_logger.debug(f"play() successful.")
         if trim_start > 0:
             def wait_and_seek(ch, ts):
                 for _ in range(50):
@@ -323,7 +320,8 @@ def crossfade_to_next():
                     time.sleep(0.05)
             threading.Thread(target=wait_and_seek, args=(next_channel, trim_start), daemon=True).start()
     except Exception as e:
-        print(f"[Automix] Errore durante play(): {e}")
+        core_logger.debug(f"Exception in play(): {e}")
+        core_logger.error(f"[Automix] Errore durante play(): {e}")
         
     player_state['crossfade_id'] += 1
     current_cf_id = player_state['crossfade_id']
@@ -360,6 +358,7 @@ def crossfade_to_next():
     player_state['is_paused'] = False
     
     threading.Thread(target=schedule_preload, daemon=True).start()
+    core_logger.debug(f"CROSSFADE FINISHED (Scheduled preload).")
 
 def audio_engine_loop():
     while True:
@@ -376,15 +375,13 @@ def audio_engine_loop():
                     if dur_sec > fade_sec and pos_sec >= (dur_sec - fade_sec):
                         now = time.time()
                         if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                            player_state['last_crossfade_time'] = now # Prevent instant retry
-                            print(f"[Automix] Raggiunto punto di crossfade ({pos_sec:.1f}s / {dur_sec:.1f}s).")
+                            core_logger.info(f"[Automix] Raggiunto punto di crossfade ({pos_sec:.1f}s / {dur_sec:.1f}s).")
                             crossfade_to_next()
                 
                 # Fallback se ha smesso di suonare improvvisamente
                 if getattr(current_channel, 'eof_reached', False) or getattr(current_channel, 'core_idle', False):
                     now = time.time()
                     if now - player_state.get('last_crossfade_time', 0) >= 2.0:
-                        player_state['last_crossfade_time'] = now # Prevent instant retry
                         crossfade_to_next()
 
             if player_state['is_playing'] and not player_state.get('next_track_queued'):
@@ -459,7 +456,7 @@ def play_folder():
                     if not is_already_playing:
                         channels[player_state['active_channel_id']].stop()
                     
-                    print(f"[Automix] Avvio prima traccia: {first_track}")
+                    core_logger.info(f"[Automix] Avvio prima traccia: {first_track}")
                     crossfade_to_next()
                     
                 except Exception as e:
@@ -571,12 +568,23 @@ def api_folders(subpath):
 
 @app.route('/api/next_track', methods=['POST'])
 def next_track():
-    if player_state['is_playing']:
-        if player_state['is_paused']:
-            channels[player_state['active_channel_id']].pause = False
-        crossfade_to_next()
-        return jsonify({"status": "fading"})
-    return jsonify({"status": "stopped"})
+    try:
+        with open('/tmp/rmusic_debug.log', 'a') as logf: logf.write(f"\\n--- API NEXT TRACK (is_playing={player_state['is_playing']}) ---\\n")
+        if player_state['is_playing']:
+            if player_state['is_paused']:
+                with open('/tmp/rmusic_debug.log', 'a') as logf: logf.write(f"Unpausing channel {player_state['active_channel_id']}\\n")
+                channels[player_state['active_channel_id']].pause = False
+            
+            with open('/tmp/rmusic_debug.log', 'a') as logf: logf.write(f"Calling crossfade_to_next()\\n")
+            crossfade_to_next()
+            with open('/tmp/rmusic_debug.log', 'a') as logf: logf.write(f"crossfade_to_next() returned.\\n")
+            return jsonify({"status": "fading"})
+        return jsonify({"status": "stopped"})
+    except Exception as e:
+        with open('/tmp/rmusic_debug.log', 'a') as logf: logf.write(f"CRASH IN NEXT_TRACK: {e}\\n")
+        import traceback
+        with open('/tmp/rmusic_debug.log', 'a') as logf: logf.write(traceback.format_exc())
+        return jsonify({"status": "error"}), 500
 
 @app.route('/api/toggle_loop', methods=['POST'])
 def toggle_loop():
@@ -704,7 +712,7 @@ def ping():
 @app.route('/api/admin/logs')
 def admin_logs():
     if isinstance(sys.stdout, LogCapture):
-        return jsonify({"logs": sys.stdout.get_logs()})
+        return jsonify({"logs": memory_handler.get_logs()})
     return jsonify({"logs": ["Log capture not active"]})
 
 @app.route('/api/analysis_status')

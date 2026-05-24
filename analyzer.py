@@ -1,3 +1,4 @@
+from logger_config import core_logger
 import os
 import json
 import warnings
@@ -45,7 +46,7 @@ def calculate_audio_hash(file_path):
                 hasher.update(chunk)
         return hasher.hexdigest()
     except Exception as e:
-        print(f"[Worker] Errore calcolo hash per {file_path}: {e}")
+        core_logger.error(f"[Worker] Errore calcolo hash per {file_path}: {e}")
         return None
 
 def delete_rmusic_tags(file_path):
@@ -77,7 +78,7 @@ def delete_rmusic_tags(file_path):
         if changed:
             audio.save(file_path, v2_version=3)
     except Exception as e:
-        print(f"[Worker] Errore cancellazione tag per {file_path}: {e}")
+        core_logger.error(f"[Worker] Errore cancellazione tag per {file_path}: {e}")
 
 def read_id3_tags(file_path):
     try:
@@ -177,7 +178,7 @@ def write_id3_tags(file_path, data):
         
         audio.save(file_path, v2_version=3)
     except Exception as e:
-        print(f"Errore salvataggio ID3 su {file_path}: {e}")
+        core_logger.error(f"Errore salvataggio ID3 su {file_path}: {e}")
 
 def update_status(progress, text, eta_seconds=None, is_running=True):
     status = {
@@ -190,11 +191,11 @@ def update_status(progress, text, eta_seconds=None, is_running=True):
         with open(STATUS_FILE, 'w') as f:
             json.dump(status, f)
     except Exception as e:
-        print(f"[System] Impossibile aggiornare status file: {e}")
+        core_logger.info(f"[System] Impossibile aggiornare status file: {e}")
 
 def _analyze_worker(file_path, q):
     return_dict = {}
-    print(f"   [Worker] Inizio processamento di: {os.path.basename(file_path)}", flush=True)
+    core_logger.info(f"   [Worker] Inizio processamento di: {os.path.basename(file_path)}", flush=True)
     try:
         from mutagen.mp3 import MP3
         duration_sec = 0.0
@@ -204,7 +205,7 @@ def _analyze_worker(file_path, q):
             pass
             
         if duration_sec > 300.0:
-            print(f"   [Worker] Mix lungo rilevato ({duration_sec:.1f}s). Analisi bypassata.", flush=True)
+            core_logger.info(f"   [Worker] Mix lungo rilevato ({duration_sec:.1f}s). Analisi bypassata.", flush=True)
             return_dict['duration'] = round(duration_sec, 1)
             return_dict['is_long_mix'] = True
             return_dict['success'] = True
@@ -248,7 +249,7 @@ def _analyze_worker(file_path, q):
             effective_duration = trim_end_sec - trim_start_sec
             
         except Exception as e:
-            print(f"   [Worker] Errore FFmpeg: {e}")
+            core_logger.error(f"   [Worker] Errore FFmpeg: {e}")
             gain = 0.0
             peak = 0.0
 
@@ -263,7 +264,7 @@ def _analyze_worker(file_path, q):
         try:
             s = aubio.source(file_path, sr, hop_s)
         except Exception as e:
-            print(f"   [Worker] Errore aubio.source: {e}")
+            core_logger.error(f"   [Worker] Errore aubio.source: {e}")
             return_dict['success'] = False
             q.put(return_dict)
             return
@@ -350,7 +351,7 @@ def _analyze_worker(file_path, q):
         q.put(return_dict)
         
     except Exception as e:
-        print(f"   [Worker] ERRORE: {e}", flush=True)
+        core_logger.error(f"   [Worker] ERRORE: {e}")
         return_dict['success'] = False
         q.put(return_dict)
 
@@ -391,7 +392,7 @@ def build_database():
     base_dir = MUSIC_ROOT_DIR
     if os.path.exists(FLAG_FILE):
         try: os.remove(FLAG_FILE)
-        except Exception as e: print(f"[System] Errore rimozione flag: {e}")
+        except Exception as e: core_logger.error(f"[System] Errore rimozione flag: {e}")
     db = {}
     update_status(0, "Lettura metadati ID3...", eta_seconds=None)
 
@@ -400,14 +401,14 @@ def build_database():
         try:
             with open(DB_FILE, 'r') as f: db = json.load(f)
         except json.JSONDecodeError as e:
-            print(f"[System] JSON corrotto o illeggibile: {e}")
+            core_logger.info(f"[System] JSON corrotto o illeggibile: {e}")
             db = {}
             json_missing = True
     else:
         json_missing = True
         
     if json_missing:
-        print("[System] music_db.json mancante o corrotto. Verrà ricostruito l'indice dai metadati dei file (nessuna ri-analisi necessaria se l'hash combacia).")
+        core_logger.info("[System] music_db.json mancante o corrotto. Verrà ricostruito l'indice dai metadati dei file (nessuna ri-analisi necessaria se l'hash combacia).")
 
     # Non usiamo più known_hashes perché ci fidiamo dei file MP3
     # Manteniamo la cache in RAM (db) e controlliamo fisicamente l'ID3 per i file.
@@ -437,14 +438,14 @@ def build_database():
     total_analysis = len(files_needing_analysis)
     
     if total_analysis > 0:
-        print(f"Trovati {total_analysis} file da analizzare.")
+        core_logger.info(f"Trovati {total_analysis} file da analizzare.")
         time_window = deque(maxlen=5)
         
         for i, (full_path, rel_path, current_hash) in enumerate(files_needing_analysis):
             if os.path.exists(FLAG_FILE):
-                print("Richiesta di interruzione ricevuta!", flush=True)
+                core_logger.info("Richiesta di interruzione ricevuta!")
                 try: os.remove(FLAG_FILE)
-                except Exception as e: print(f"[System] Errore rimozione flag: {e}")
+                except Exception as e: core_logger.error(f"[System] Errore rimozione flag: {e}")
                 with open(DB_FILE, 'w') as f: json.dump(db, f, indent=4)
                 update_status(progress if 'progress' in locals() else 0, "Analisi interrotta dall'utente.", is_running=False)
                 return
@@ -488,7 +489,7 @@ def build_database():
     import subprocess
     import sys
     subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'normalizer.py')])
-    print("Analisi completata! Passaggio al Normalizzatore.")
+    core_logger.info("Analisi completata! Passaggio al Normalizzatore.")
 
 if __name__ == "__main__":
     try: multiprocessing.set_start_method('spawn', force=True)

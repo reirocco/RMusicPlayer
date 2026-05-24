@@ -1,3 +1,4 @@
+from logger_config import core_logger
 import os
 import json
 import time
@@ -22,7 +23,7 @@ def mark_as_normalized(file_path):
         audio.add(TXXX(encoding=3, desc='X-IS-NORMALIZED', text='True'))
         audio.save(file_path, v2_version=3)
     except Exception as e:
-        print(f"[Normalizer] Errore tag ID3 su {file_path}: {e}")
+        core_logger.error(f"[Normalizer] Errore tag ID3 su {file_path}: {e}")
 
 def check_if_normalized(file_path):
     try:
@@ -44,7 +45,7 @@ def update_status(progress, text, is_running=True):
         with open(STATUS_FILE, 'w') as f:
             json.dump(status, f)
     except Exception as e:
-        print(f"[Normalizer] Errore status: {e}")
+        core_logger.error(f"[Normalizer] Errore status: {e}")
 
 def get_duration(file_path):
     try:
@@ -61,13 +62,13 @@ def get_lufs(file_path):
         if i_matches:
             return float(i_matches[-1])
     except Exception as e:
-        print(f"[Normalizer] Errore EBU R128 su {os.path.basename(file_path)}: {e}")
+        core_logger.error(f"[Normalizer] Errore EBU R128 su {os.path.basename(file_path)}: {e}")
     return None
 
 def normalize_file(file_path, gain_db):
     temp_file = os.path.join(BASE_DIR, f"temp_norm_{uuid.uuid4().hex}.mp3")
     try:
-        print(f"[Normalizer] Normalizzo {os.path.basename(file_path)} di +{gain_db:.1f}dB...")
+        core_logger.info(f"[Normalizer] Normalizzo {os.path.basename(file_path)} di +{gain_db:.1f}dB...")
         cmd = [
             'ffmpeg', '-y', '-i', file_path,
             '-af', f'volume={gain_db}dB,alimiter=limit=-0.5dB',
@@ -79,17 +80,17 @@ def normalize_file(file_path, gain_db):
         # Sovrascrivi originale
         os.replace(temp_file, file_path)
         mark_as_normalized(file_path)
-        print(f"[Normalizer] Completato {os.path.basename(file_path)}")
+        core_logger.info(f"[Normalizer] Completato {os.path.basename(file_path)}")
         return True
     except Exception as e:
-        print(f"[Normalizer] Errore conversione {os.path.basename(file_path)}: {e}")
+        core_logger.error(f"[Normalizer] Errore conversione {os.path.basename(file_path)}: {e}")
         if os.path.exists(temp_file):
             try: os.remove(temp_file)
             except: pass
         return False
 
 def main():
-    print("[Normalizer] Avvio scansione per mix lunghi...")
+    core_logger.info("[Normalizer] Avvio scansione per mix lunghi...")
     update_status(0, "Ricerca mix lunghi...", is_running=True)
     
     mp3_files = []
@@ -115,7 +116,7 @@ def main():
             mix_files.append(file_path)
             
     total_mix = len(mix_files)
-    print(f"[Normalizer] Trovati {total_mix} mix lunghi da verificare.")
+    core_logger.info(f"[Normalizer] Trovati {total_mix} mix lunghi da verificare.")
     
     if total_mix == 0:
         update_status(100, "Nessun mix lungo trovato.", is_running=False)
@@ -131,7 +132,7 @@ def main():
         # Check stop flag
         flag_file = os.path.join(MUSIC_ROOT_DIR, 'stop_analysis.flag')
         if os.path.exists(flag_file):
-            print("[Normalizer] Ricevuto segnale di stop.")
+            core_logger.info("[Normalizer] Ricevuto segnale di stop.")
             os.remove(flag_file)
             update_status(100, "Normalizzazione interrotta.", is_running=False)
             return
