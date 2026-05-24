@@ -70,7 +70,7 @@ def normalize_file(file_path, gain_db):
         print(f"[Normalizer] Normalizzo {os.path.basename(file_path)} di +{gain_db:.1f}dB...")
         cmd = [
             'ffmpeg', '-y', '-i', file_path,
-            '-af', f'volume={gain_db}dB',
+            '-af', f'volume={gain_db}dB,alimiter=limit=-0.5dB',
             '-c:a', 'libmp3lame', '-b:a', '320k',
             temp_file
         ]

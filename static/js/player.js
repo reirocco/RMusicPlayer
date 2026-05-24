@@ -7,10 +7,7 @@ let hasFilesHere = false;
 let analysisRunning = true;
 let logInterval = null;
 
-let localTrackPos = 0;
-let localTrackDur = 0;
 let localIsPlaying = false;
-let localLastSyncTime = Date.now();
 
 function encodePath(path) {
     if (!path) return "";
@@ -303,6 +300,7 @@ function startServerAutomix(folderPath) {
     .then(res => res.json())
     .then(data => {
         if(data.status === "error") alert("Errore: " + data.message);
+        else updateServerStatus();
     });
 }
 
@@ -385,11 +383,7 @@ function updateServerStatus() {
                 playPauseBtn.classList.remove('playing');
                 if(nextBtn) nextBtn.disabled = true;
                 if(queueBtn) queueBtn.disabled = true;
-                if(queueBadge) queueBadge.style.display = 'none';
-                
                 localIsPlaying = false;
-                localTrackDur = 0;
-                localTrackPos = 0;
             }
         })
         .catch(() => {});
@@ -403,11 +397,13 @@ function formatDuration(sec) {
 }
 
 function togglePlayPause() {
-    fetch('/api/toggle_playback', { method: 'POST' });
+    fetch('/api/toggle_playback', { method: 'POST' })
+        .then(() => updateServerStatus());
 }
 
 function triggerNextTrack() {
-    fetch('/api/next_track', { method: 'POST' });
+    fetch('/api/next_track', { method: 'POST' })
+        .then(() => updateServerStatus());
 }
 
 function toggleAutomixLoop() {
@@ -527,7 +523,7 @@ function triggerScanNew() {
     fetch('/api/admin/scan_new', { method: 'POST' })
         .then(res => res.json())
         .then(data => {
-            window.location.reload();
+            checkAnalysisStatus();
         });
 }
 

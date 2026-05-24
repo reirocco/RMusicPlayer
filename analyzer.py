@@ -192,7 +192,8 @@ def update_status(progress, text, eta_seconds=None, is_running=True):
     except Exception as e:
         print(f"[System] Impossibile aggiornare status file: {e}")
 
-def _analyze_worker(file_path, return_dict):
+def _analyze_worker(file_path, q):
+    return_dict = {}
     print(f"   [Worker] Inizio processamento di: {os.path.basename(file_path)}", flush=True)
     try:
         from mutagen.mp3 import MP3
@@ -207,6 +208,7 @@ def _analyze_worker(file_path, return_dict):
             return_dict['duration'] = round(duration_sec, 1)
             return_dict['is_long_mix'] = True
             return_dict['success'] = True
+            q.put(return_dict)
             return
 
         # --- 0. DURATION (Mutagen) ---
@@ -263,6 +265,7 @@ def _analyze_worker(file_path, return_dict):
         except Exception as e:
             print(f"   [Worker] Errore aubio.source: {e}")
             return_dict['success'] = False
+            q.put(return_dict)
             return
             
         tempo_o = aubio.tempo("default", win_s, hop_s, sr)
@@ -299,6 +302,7 @@ def _analyze_worker(file_path, return_dict):
                 
         if total_frames == 0:
             return_dict['success'] = False
+            q.put(return_dict)
             return
 
         # --- 2. SMART CUE POINT (Beat Detection) ---
@@ -343,40 +347,45 @@ def _analyze_worker(file_path, return_dict):
         return_dict['peak'] = round(peak, 2)
         return_dict['energy'] = energy
         return_dict['success'] = True
+        q.put(return_dict)
         
     except Exception as e:
         print(f"   [Worker] ERRORE: {e}", flush=True)
         return_dict['success'] = False
+        q.put(return_dict)
 
-def safe_analyze_audio(file_path):
+def safe_analyze_audio(file_path, current_hash):
     if FORCE_REANALYZE:
         delete_rmusic_tags(file_path)
     else:
         cached = read_id3_tags(file_path)
-        if cached:
+        if cached and cached.get('hash') == current_hash:
+            cached['_from_cache'] = True
             return cached
 
-    with multiprocessing.Manager() as manager:
-        return_dict = manager.dict()
-        p = multiprocessing.Process(target=_analyze_worker, args=(file_path, return_dict))
-        p.start()
-        p.join(timeout=600) # 10 minuti per i mix lunghi
+    q = multiprocessing.Queue()
+    p = multiprocessing.Process(target=_analyze_worker, args=(file_path, q))
+    p.start()
+    p.join(timeout=600) # 10 minuti per i mix lunghi
+    
+    if p.is_alive():
+        p.terminate()
+        p.join()
+        time.sleep(0.1)
+        return None
+    
+    if p.exitcode != 0:
+        time.sleep(0.5)
+        return None
         
-        if p.is_alive():
-            p.terminate()
-            p.join()
-            time.sleep(0.1)
-            return None
-        
-        if p.exitcode != 0:
-            time.sleep(0.5)
-            return None
-            
-        if return_dict.get('success'):
-            # Converti in dict normale per evitare problemi con Manager
-            return dict(return_dict)
-        else:
-            return None
+    try:
+        if not q.empty():
+            return_dict = q.get_nowait()
+            if return_dict.get('success'):
+                return return_dict
+    except:
+        pass
+    return None
 
 def build_database():
     base_dir = MUSIC_ROOT_DIR
@@ -420,6 +429,11 @@ def build_database():
         elif rel_path not in db:
             files_needing_analysis.append((full_path, rel_path, None))
 
+    all_rel_paths = set(rel_path for _, rel_path in all_files)
+    keys_to_remove = [k for k in db.keys() if k not in all_rel_paths]
+    for k in keys_to_remove:
+        del db[k]
+
     total_analysis = len(files_needing_analysis)
     
     if total_analysis > 0:
@@ -445,7 +459,7 @@ def build_database():
             progress = 5 + int((i / total_analysis) * 95)
             update_status(progress, f"Analisi ({i+1}/{total_analysis}): {os.path.basename(full_path)}", eta_seconds=eta)
             
-            result = safe_analyze_audio(full_path)
+            result = safe_analyze_audio(full_path, current_hash)
             
             elapsed = time.time() - start_time
             time_window.append(elapsed)
@@ -453,12 +467,14 @@ def build_database():
             if result:
                 # Pulizia: rimuovi chiavi interne del worker se presenti
                 if 'success' in result: del result['success']
+                
+                is_from_cache = result.pop('_from_cache', False)
 
-                result['hash'] = current_hash
-                result['timestamp'] = datetime.datetime.now().isoformat()
-
-                # Salva i metadati nel file MP3
-                write_id3_tags(full_path, result)
+                if not is_from_cache:
+                    result['hash'] = current_hash
+                    result['timestamp'] = datetime.datetime.now().isoformat()
+                    # Salva i metadati nel file MP3 solo se nuovo
+                    write_id3_tags(full_path, result)
                 
                 db[rel_path] = result
             else:

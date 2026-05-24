@@ -148,8 +148,11 @@ threading.Thread(target=db_reloader, daemon=True).start()
 
 def are_keys_compatible(key1_camelot, key2_camelot):
     if not key1_camelot or not key2_camelot or "N/A" in [key1_camelot, key2_camelot]: return False
-    num1, letter1 = int(key1_camelot[:-1]), key1_camelot[-1]
-    num2, letter2 = int(key2_camelot[:-1]), key2_camelot[-1]
+    try:
+        num1, letter1 = int(key1_camelot[:-1]), key1_camelot[-1]
+        num2, letter2 = int(key2_camelot[:-1]), key2_camelot[-1]
+    except ValueError:
+        return False
     if num1 == num2: return True
     if letter1 == letter2 and (num2 == num1 + 1 or (num1 == 12 and num2 == 1)): return True
     if letter1 == letter2 and (num2 == num1 - 1 or (num1 == 1 and num2 == 12)): return True
@@ -160,31 +163,37 @@ def sort_pool_automix(start_track, pool):
     current = start_track
     remaining = list(pool)
     
+    db_cache = {p: music_db.get(p, {}) for p in remaining}
+    if current:
+        db_cache[current] = music_db.get(current, {})
+    
     while remaining:
         if not current:
             chosen = random.choice(remaining)
         else:
-            current_track_data = music_db.get(current)
-            if not current_track_data:
-                chosen = random.choice(remaining)
-            else:
-                harmonic_matches = [
+            current_track_data = db_cache.get(current, {})
+            current_camelot = current_track_data.get('camelot')
+            current_bpm = current_track_data.get('bpm', 120)
+            current_energy = current_track_data.get('energy', 5)
+
+            candidates = []
+            if current_camelot and current_camelot != "N/A":
+                candidates = [
                     p for p in remaining 
-                    if are_keys_compatible(current_track_data.get('camelot'), music_db.get(p, {}).get('camelot'))
+                    if are_keys_compatible(current_camelot, db_cache[p].get('camelot'))
                 ]
+            
+            if not candidates:
+                candidates = remaining
                 
-                candidates = harmonic_matches if harmonic_matches else remaining
-                current_bpm = current_track_data.get('bpm', 120)
-                current_energy = current_track_data.get('energy', 5)
+            energy_matches = [
+                p for p in candidates
+                if abs(db_cache[p].get('energy', 5) - current_energy) <= 2
+            ]
+            if energy_matches: 
+                candidates = energy_matches
 
-                energy_matches = [
-                    p for p in candidates
-                    if abs(music_db.get(p, {}).get('energy', 5) - current_energy) <= 2
-                ]
-                if energy_matches: candidates = energy_matches
-
-                candidates.sort(key=lambda p: abs(music_db.get(p, {}).get('bpm', 120) - current_bpm))
-                chosen = candidates[0]
+            chosen = min(candidates, key=lambda p: abs(db_cache[p].get('bpm', 120) - current_bpm))
                 
         sorted_queue.append(chosen)
         remaining.remove(chosen)
@@ -202,14 +211,16 @@ def refresh_queue_with_automix():
     files = []
     current = player_state.get('current_track')
     
-    for f in os.listdir(target_dir):
-        if f.endswith('.mp3') and not f.startswith('.'):
-            full_path = os.path.join(target_dir, f)
-            rel_path = os.path.relpath(full_path, MUSIC_ROOT_DIR).replace('\\', '/')
-            if rel_path == current:
-                continue
-            
-            files.append(rel_path)
+    for root, dirs, f_list in os.walk(target_dir):
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        for f in f_list:
+            if f.endswith('.mp3') and not f.startswith('.'):
+                full_path = os.path.join(root, f)
+                rel_path = os.path.relpath(full_path, MUSIC_ROOT_DIR).replace('\\', '/')
+                if rel_path == current:
+                    continue
+                
+                files.append(rel_path)
     
     if files:
         random.shuffle(files)
@@ -221,9 +232,11 @@ def pop_next_track():
     global player_state
     
     if player_state['explicit_queue']:
+        player_state['next_track_source'] = 'explicit'
         return player_state['explicit_queue'].pop(0)
     
     if player_state['queue']:
+        player_state['next_track_source'] = 'automix'
         track = player_state['queue'].pop(0)
         if len(player_state['queue']) == 0 and player_state.get('is_folder_loop_active'):
             threading.Thread(target=refresh_queue_with_automix, daemon=True).start()
@@ -233,6 +246,7 @@ def pop_next_track():
         print("[Automix] Coda vuota ma Loop attivo. Ricarico sincrono...")
         refresh_queue_with_automix()
         if player_state['queue']:
+            player_state['next_track_source'] = 'automix'
             return player_state['queue'].pop(0)
             
     if player_state['playlist']:
@@ -240,8 +254,10 @@ def pop_next_track():
         start_t = player_state['current_track'] or player_state['playlist'][0]
         player_state['queue'] = sort_pool_automix(start_t, player_state['playlist'])
         if player_state['queue']:
+            player_state['next_track_source'] = 'automix'
             return player_state['queue'].pop(0)
 
+    player_state['next_track_source'] = None
     return None
 
 
@@ -293,9 +309,21 @@ def crossfade_to_next():
     else:
         next_channel.command('set', 'options/af', 'volume=0dB')
         
-    next_channel.play(full_mp3_path)
-    if trim_start > 0:
-        next_channel.time_pos = trim_start
+    try:
+        next_channel.pause = False
+        next_channel.play(full_mp3_path)
+        if trim_start > 0:
+            def wait_and_seek(ch, ts):
+                for _ in range(50):
+                    if ch.time_pos is not None:
+                        try:
+                            ch.time_pos = ts
+                        except: pass
+                        break
+                    time.sleep(0.05)
+            threading.Thread(target=wait_and_seek, args=(next_channel, trim_start), daemon=True).start()
+    except Exception as e:
+        print(f"[Automix] Errore durante play(): {e}")
         
     player_state['crossfade_id'] += 1
     current_cf_id = player_state['crossfade_id']
@@ -328,6 +356,8 @@ def crossfade_to_next():
     player_state['last_crossfade_time'] = now
     player_state['current_duration_sec'] = trim_end
     player_state['last_play_resume_time'] = now
+    player_state['track_pos_sec'] = trim_start
+    player_state['is_paused'] = False
     
     threading.Thread(target=schedule_preload, daemon=True).start()
 
@@ -542,6 +572,8 @@ def api_folders(subpath):
 @app.route('/api/next_track', methods=['POST'])
 def next_track():
     if player_state['is_playing']:
+        if player_state['is_paused']:
+            channels[player_state['active_channel_id']].pause = False
         crossfade_to_next()
         return jsonify({"status": "fading"})
     return jsonify({"status": "stopped"})
@@ -565,7 +597,8 @@ def get_queue():
     
     preloaded = player_state.get('next_track_queued')
     if preloaded:
-        if ui_explicit:
+        source = player_state.get('next_track_source', 'automix')
+        if source == 'explicit':
             ui_explicit.insert(0, preloaded)
         else:
             ui_automix.insert(0, preloaded)
